@@ -3,7 +3,6 @@ from ultralytics import YOLO
 
 _model = None
 
-
 def find_model():
     current = Path(__file__).resolve().parent
 
