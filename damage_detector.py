@@ -2,7 +2,6 @@
 from pathlib import Path
 from ultralytics import YOLO
 
-# best.pt is expected in the same folder as this Python file
 MODEL_PATH = Path(__file__).resolve().parent / "best.pt"
 
 _model = None
