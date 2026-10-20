@@ -1,9 +1,7 @@
 from pathlib import Path
 from ultralytics import YOLO
 
-MODEL_PATH = Path(__file__).resolve().parent.parent / "best.pt"
-_model = None
-
+MODEL_PATH = Path(__file__).resolve().parent.parent.parent / "best.pt"
 def get_model():
     """Load the trained model once and reuse it."""
     global _model
