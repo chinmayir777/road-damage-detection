@@ -1,11 +1,7 @@
 from pathlib import Path
 from ultralytics import YOLO
 
-MODEL_PATH = Path(
-    "/content/drive/MyDrive/Road_Damage_Project/"
-    "training_results/road_damage_yolov8n/weights/best.pt"
-)
-
+MODEL_PATH = Path(__file__).resolve().parent.parent / "best.pt"
 _model = None
 
 def get_model():
