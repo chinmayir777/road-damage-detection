@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 import uuid
 
 import psycopg
@@ -10,6 +11,7 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from damage_detector import detect_damage
 from report_service import save_report
@@ -214,11 +216,19 @@ async def submit_report(
         raise HTTPException(status_code=413, detail="Image must be 10 MB or smaller.")
 
     temp_path = None
+    request_started = time.perf_counter()
+    print("[ROAD-REPORT] Upload request received", flush=True)
     try:
         with tempfile.NamedTemporaryFile(suffix=ALLOWED_TYPES[file.content_type], delete=False) as temp:
             temp.write(content)
             temp_path = Path(temp.name)
-        result = detect_damage(temp_path)
+        inference_started = time.perf_counter()
+        print("[ROAD-REPORT] Starting YOLO inference", flush=True)
+        result = await run_in_threadpool(detect_damage, temp_path)
+        print(
+            f"[ROAD-REPORT] YOLO finished in {time.perf_counter() - inference_started:.2f}s",
+            flush=True,
+        )
         detections = result["detections"]
         features = extract_features(detections)
         severity = assess_severity(detections, features)
@@ -227,11 +237,20 @@ async def submit_report(
         upload_dir.mkdir(parents=True, exist_ok=True)
         saved = upload_dir / f"{uuid.uuid4().hex}{ALLOWED_TYPES[file.content_type]}"
         shutil.copy2(temp_path, saved)
-        report = save_report(
-            image_path=str(saved), latitude=latitude, longitude=longitude,
-            description=description.strip() or None, detections=detections,
+        print("[ROAD-REPORT] Saving report record", flush=True)
+        save_started = time.perf_counter()
+        report = await run_in_threadpool(
+            lambda: save_report(
+                image_path=str(saved), latitude=latitude, longitude=longitude,
+                description=description.strip() or None, detections=detections,
+            )
         )
-        with psycopg.connect(db_url()) as conn:
+        print(
+            f"[ROAD-REPORT] Report record saved in {time.perf_counter() - save_started:.2f}s",
+            flush=True,
+        )
+        print("[ROAD-REPORT] Updating report and calculating priorities", flush=True)
+        with psycopg.connect(db_url(), connect_timeout=10) as conn:
             ensure_columns(conn)
             conn.execute("""
                 UPDATE road_reports SET detections=%s::jsonb, detection_count=%s,
@@ -255,6 +274,10 @@ async def submit_report(
                 SELECT priority, priority_score, conventional_score, proposed_score
                 FROM road_reports WHERE reference_code::text=%s
             """, (str(report["reference_code"]),)).fetchone()
+        print(
+            f"[ROAD-REPORT] Upload completed in {time.perf_counter() - request_started:.2f}s",
+            flush=True,
+        )
         return {
             "message": "Report submitted successfully",
             "reference_code": str(report["reference_code"]),
@@ -270,8 +293,11 @@ async def submit_report(
     except HTTPException:
         raise
     except Exception as e:
-        print("REPORT SUBMISSION ERROR:", repr(e), flush=True)
-        raise HTTPException(status_code=500, detail="Report submission failed. Check Render logs.")
+        print(
+            f"[ROAD-REPORT] SUBMISSION ERROR after {time.perf_counter() - request_started:.2f}s: {e!r}",
+            flush=True,
+        )
+        raise HTTPException(status_code=500, detail="Report submission failed. Check Render logs.") from e
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
@@ -280,7 +306,7 @@ async def submit_report(
 @app.get("/api/reports")
 def list_reports():
     try:
-        with psycopg.connect(db_url()) as conn:
+        with psycopg.connect(db_url(), connect_timeout=10) as conn:
             ensure_columns(conn)
             rows = conn.execute("""
                 SELECT report_id, reference_code, latitude, longitude, description,
@@ -333,7 +359,7 @@ def update_road_context(report_id: int, update: ContextUpdate, x_authority_pin: 
     if update.location_type not in {"General", "Junction/Transit", "School/Hospital"}:
         raise HTTPException(status_code=400, detail="Invalid location type.")
     try:
-        with psycopg.connect(db_url()) as conn:
+        with psycopg.connect(db_url(), connect_timeout=10) as conn:
             ensure_columns(conn)
             found = conn.execute("""
                 UPDATE road_reports SET traffic_level=%s, road_importance=%s,
@@ -361,7 +387,7 @@ def update_status(report_id: int, update: StatusUpdate, x_authority_pin: str | N
     if update.report_status not in VALID_STATUSES:
         raise HTTPException(status_code=400, detail="Invalid report status.")
     try:
-        with psycopg.connect(db_url()) as conn:
+        with psycopg.connect(db_url(), connect_timeout=10) as conn:
             ensure_columns(conn)
             found = conn.execute(
                 "UPDATE road_reports SET report_status=%s WHERE report_id=%s RETURNING report_id",
