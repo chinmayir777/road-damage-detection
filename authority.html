@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Authority Control Desk</title>
+    <style>:root{font-family:Inter,system-ui,Arial;color:#182438;background:#f3f6fb}*{box-sizing:border-box}
+      body{margin:0}.wrap{max-width:1500px;margin:auto;padding:24px 18px}.
+      head{display:flex;justify-content:space-between;align-items:center;gap:15px;background:#172741;color:white;padding:22px;border-radius:15px;margin-bottom:18px}.
+      head h1{margin:0 0 5px;font-size:25px}.head p{margin:0;color:#c6d3e7}
+      .card{background:white;border:1px solid #e2e8f0;border-radius:14px;padding:20px;margin-bottom:18px}
+      .login{max-width:500px;margin:50px auto}
+      .field label{display:block;font-size:12px;font-weight:800;margin-bottom:6px}
+      .field input,.field select{width:100%;padding:10px;border:1px solid #d6dfeb;border-radius:8px;background:#fff;font:inherit}
+      .field{margin:12px 0}.btn{border:0;border-radius:8px;background:#3567e8;color:white;padding:10px 14px;font:inherit;font-weight:750;cursor:pointer}
+      .btn:disabled{opacity:.6}.btn.alt{background:#eaf0ff;color:#315cc9}
+      .notice{display:none;margin-top:12px;padding:11px;border-radius:8px;font-size:13px;overflow-wrap:anywhere}
+      .notice.show{display:block}.ok{background:#e9f8f0;color:#176b4d}.err{background:#fff0f0;color:#a32e3a}
+      .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+      .metric{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px}
+      .metric span{display:block;color:#718096;font-size:12px}.metric strong{display:block;font-size:28px;margin-top:6px}
+      .toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+      .table-wrap{overflow:auto;margin-top:12px}table{width:100%;border-collapse:collapse;min-width:1050px;text-align:left}
+      th{font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:#718096;background:#f7f9fc;padding:12px 10px}
+      td{border-top:1px solid #e8edf4;padding:12px 10px;font-size:12px;vertical-align:top}td:first-child{font-weight:750}
+      .pill{display:inline-block;padding:5px 8px;border-radius:20px;background:#fff2d9;color:#975b00;font-size:11px;font-weight:800}
+      .pill.high{background:#ffebed;color:#b72f3d}.pill.low{background:#e4f6ed;color:#14734f}.muted{color:#718096;font-size:12px}
+      .controls{min-width:190px}.controls select{margin:3px 0}.report-detail{margin-top:16px}.report-detail h2{font-size:17px}
+      .details-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+      .detail{border:1px solid #e5eaf2;border-radius:10px;padding:13px;overflow-wrap:anywhere}
+      .detail strong{display:block;font-size:18px;margin-top:5px}.detections{padding-left:18px}
+      .empty{text-align:center;padding:24px;color:#718096}.maplink{color:#315cc9}.actions{display:flex;gap:8px;flex-wrap:wrap}
+      .footer{text-align:center;color:#718096;font-size:12px;margin:18px}
+      .hidden{display:none!important}@media(max-width:850px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+                                                             .details-grid{grid-template-columns:1fr 1fr}
+                                                             .head{align-items:flex-start;flex-direction:column}}@media(max-width:520px){
+        .wrap{padding:12px}.metrics,.details-grid{grid-template-columns:1fr}.card{padding:14px}}
+</style></head>
+  <body><div class="wrap">
+    <header class="head"><div>
+      <h1>Authority Control Desk</h1>
+      <p>Review reports, verify road context, prioritize maintenance, and update repair status.</p></div>
+      <div class="actions"><a href="/" style="color:#fff;align-self:center">Public dashboard ↗</a>
+        <button class="btn alt hidden" id="logout">Lock dashboard</button></div>
+    </header>
+<section class="card login" id="loginCard">
+  <h2>Authority sign-in</h2>
+  <p class="muted">Enter the administrator-configured authority PIN to view private report details and manage reports.</p>
+  <form id="loginForm">
+    <div class="field">
+      <label for="pin">Authority PIN</label>
+      <input id="pin" type="password" autocomplete="current-password" required placeholder="Enter authority PIN">
+    </div>
+    <button class="btn" id="loginBtn" type="submit">Unlock authority dashboard</button>
+    <div class="notice" id="loginNotice"></div>
+  </form>
+</section>
+<div id="desk" class="hidden">
+  <section class="metrics">
+    <div class="metric">
+      <span>Total reports</span>
+      <strong id="total">—</strong>
+    </div>
+    <div class="metric">
+      <span>Awaiting action</span>
+      <strong id="open">—</strong>
+    </div>
+    <div class="metric">
+      <span>High priority</span>
+      <strong id="high">—</strong>
+    </div>
+    <div class="metric"><span>Repaired</span>
+      <strong id="repaired">—</strong>
+    </div>
+  </section>
+  <section class="card">
+    <div class="toolbar"><div>
+      <h2 style="margin:0">All road reports</h2>
+      <p class="muted">Newest first. Select a report to inspect its full analysis.</p>
+    </div>
+      <div class="actions">
+        <button class="btn alt" id="refresh">Refresh reports</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Reference / report</th>
+            <th>Location</th>
+            <th>Submitted</th>
+            <th>Damage / severity</th>
+            <th>Confidence / uncertainty</th>
+            <th>Priority</th>
+            <th>Road context</th>
+            <th>Repair status</th>
+            <th>Details</th>
+          </tr>
+        </thead>
+        <tbody id="rows">
+          <tr>
+            <td colspan="9" class="empty">Loading reports…</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="notice" id="deskNotice"></div>
+  </section>
+  <section class="card report-detail" id="detailCard">
+    <h2>Selected report details</h2>
+    <p class="muted">Choose “View details” in a report row to inspect its AI and risk information.</p>
+    <div id="detailBody"></div>
+  </section>
+</div>
+    <div class="footer">AI-Powered Road Damage Detection and Maintenance Prioritization System · Authority-only workspace</div>
+  </div>
+<script>const API=location.origin,$=id=>document.getElementById(id);let pin='',reports=[];function esc(v){return String(v??'—').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function note(id,msg,type){const n=$(id);n.textContent=msg;n.className='notice show '+type}function date(v){if(!v)return'—';const d=new Date(v);return isNaN(d)?'—':d.toLocaleString()}async function api(url,options={}){options.headers={...(options.headers||{}),'X-Authority-PIN':pin};const r=await fetch(API+url,options);const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.detail||'Request failed ('+r.status+')');return d}$('loginForm').onsubmit=async e=>{e.preventDefault();pin=$('pin').value.trim();const b=$('loginBtn');b.disabled=true;try{await api('/api/authority/verify',{method:'POST'});$('loginCard').classList.add('hidden');$('desk').classList.remove('hidden');$('logout').classList.remove('hidden');await loadReports()}catch(err){pin='';note('loginNotice',err.message,'err')}finally{b.disabled=false}};$('logout').onclick=()=>{pin='';reports=[];$('pin').value='';$('desk').classList.add('hidden');$('loginCard').classList.remove('hidden');$('logout').classList.add('hidden');$('rows').innerHTML='';$('detailBody').innerHTML=''};$('refresh').onclick=loadReports;async function loadReports(){try{reports=await api('/api/reports');$('total').textContent=reports.length;$('open').textContent=reports.filter(r=>r.report_status!=='Repaired').length;$('high').textContent=reports.filter(r=>r.priority==='High'&&r.report_status!=='Repaired').length;$('repaired').textContent=reports.filter(r=>r.report_status==='Repaired').length;const statuses=['Reported','Under Review','Repair Scheduled','In Progress','Repaired'];$('rows').innerHTML=reports.length?reports.map(r=>`<tr><td><strong>${esc(r.reference_code)}</strong><br><span class="muted">Report #${esc(r.report_id)}</span></td><td>${esc(r.description||'No address description')}<br><a class="maplink" href="https://www.openstreetmap.org/?mlat=${encodeURIComponent(r.latitude)}&mlon=${encodeURIComponent(r.longitude)}#map=17/${encodeURIComponent(r.latitude)}/${encodeURIComponent(r.longitude)}" target="_blank" rel="noopener">${Number(r.latitude).toFixed(5)}, ${Number(r.longitude).toFixed(5)} ↗</a></td><td>${esc(date(r.submitted_at))}</td><td>${esc(r.detection_count)} detection(s)<br><span class="pill">${esc(r.severity||'Unassessed')}</span></td><td>${r.avg_confidence==null?'—':Math.round(r.avg_confidence*100)+'%'} mean<br><span class="pill">${esc(r.uncertainty_level||'Unassessed')}</span><br><span class="muted">${esc(r.decision_route||'Review')}${r.manual_verification_required?' · manual review':''}</span></td><td><span class="pill ${(r.priority||'').toLowerCase()}">${esc(r.priority||'Pending')}</span><br><strong>${r.priority_score==null?'—':esc(r.priority_score)+'/100'}</strong><br><span class="muted">Baseline ${r.conventional_score==null?'—':esc(r.conventional_score)} / Proposed ${r.proposed_score==null?'—':esc(r.proposed_score)}</span></td><td>${esc(r.traffic_level||'Traffic pending')}<br>${esc(r.road_importance||'Road class pending')}<br>${esc(r.location_type||'Location type pending')}<br><span class="muted">${esc(r.context_status)}</span></td><td><select class="statusSel" data-id="${esc(r.report_id)}">${statuses.map(s=>`<option ${s===r.report_status?'selected':''}>${s}</option>`).join('')}</select><button class="btn saveStatus" data-id="${esc(r.report_id)}" style="margin-top:5px;padding:7px 9px">Save status</button></td><td><button class="btn alt detailsBtn" data-id="${esc(r.report_id)}">View details</button></td></tr>`).join(''):'<tr><td colspan="9" class="empty">No road reports have been submitted yet.</td></tr>';document.querySelectorAll('.saveStatus').forEach(b=>b.onclick=()=>saveStatus(b));document.querySelectorAll('.detailsBtn').forEach(b=>b.onclick=()=>showDetails(Number(b.dataset.id)));note('deskNotice','Loaded '+reports.length+' report(s).','ok')}catch(e){note('deskNotice',e.message,'err');if(/PIN|authority|configured/i.test(e.message)){ $('desk').classList.add('hidden');$('loginCard').classList.remove('hidden')}}}async function saveStatus(b){const id=Number(b.dataset.id),sel=document.querySelector(`.statusSel[data-id="${id}"]`);b.disabled=true;try{await api('/api/reports/'+id+'/status',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({report_status:sel.value})});await loadReports();note('deskNotice','Report status updated.','ok')}catch(e){note('deskNotice',e.message,'err')}finally{b.disabled=false}}function showDetails(id){const r=reports.find(x=>Number(x.report_id)===id);if(!r)return;const det=Array.isArray(r.detections)?r.detections:[];$('detailBody').innerHTML=`<div class="details-grid"><div class="detail"><span class="muted">Reference ID</span><strong style="font-size:13px">${esc(r.reference_code)}</strong></div><div class="detail"><span class="muted">Suggested priority</span><strong>${esc(r.priority)} · ${r.priority_score==null?'—':esc(r.priority_score)+'/100'}</strong></div><div class="detail"><span class="muted">Severity estimate</span><strong>${esc(r.severity||'Unassessed')}</strong></div><div class="detail"><span class="muted">Average model confidence</span><strong>${r.avg_confidence==null?'—':Math.round(r.avg_confidence*100)+'%'}</strong></div><div class="detail"><span class="muted">Uncertainty / decision route</span><strong>${esc(r.uncertainty_level)} / ${esc(r.decision_route)}</strong><p class="muted">Manual verification required: ${r.manual_verification_required?'Yes':'No'}</p></div><div class="detail"><span class="muted">Approximate damage features</span><p>Size ratio: ${esc(r.damage_size_ratio)}<br>Extent: ${esc(r.damage_extent)}<br>Density: ${esc(r.damage_density)}</p></div><div class="detail"><span class="muted">Authority-verified context</span><p>Traffic: ${esc(r.traffic_level)}<br>Road importance: ${esc(r.road_importance)}<br>Location type: ${esc(r.location_type)}<br>Verification: ${esc(r.context_status)}</p></div><div class="detail"><span class="muted">Scores</span><p>Conventional baseline: ${esc(r.conventional_score)}<br>Proposed/context-aware: ${esc(r.proposed_score)}<br>Current priority score: ${esc(r.priority_score)}</p></div><div class="detail"><span class="muted">Submission</span><p>${esc(date(r.submitted_at))}<br>Status: ${esc(r.report_status)}</p><a class="maplink" target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${encodeURIComponent(r.latitude)}&mlon=${encodeURIComponent(r.longitude)}#map=18/${encodeURIComponent(r.latitude)}/${encodeURIComponent(r.longitude)}">Open location map ↗</a></div></div><h3>Detected damage objects (${det.length})</h3>${det.length?'<ul class="detections">'+det.map((d,i)=>`<li><strong>${esc(d.damage_type||'Damage')} #${i+1}</strong> — confidence ${Math.round((Number(d.confidence)||0)*100)}%; bounding box: ${esc(JSON.stringify(d.bbox_xyxy||[]))}</li>`).join('')+'</ul>':'<p class="muted">No damage detections recorded for this report.</p>'}<h3>Verify road context</h3><p class="muted">Only enter context after authority/system verification. Saving context recalculates report priorities.</p><div class="details-grid"><div class="field"><label>Traffic level</label><select id="ctxTraffic"><option ${r.traffic_level==='Low'?'selected':''}>Low</option><option ${r.traffic_level==='Medium'?'selected':''}>Medium</option><option ${r.traffic_level==='High'?'selected':''}>High</option></select></div><div class="field"><label>Road importance</label><select id="ctxRoad"><option ${r.road_importance==='Local'?'selected':''}>Local</option><option ${r.road_importance==='Collector'?'selected':''}>Collector</option><option ${r.road_importance==='Major'?'selected':''}>Major</option></select></div><div class="field"><label>Location type</label><select id="ctxLocation"><option ${r.location_type==='General'?'selected':''}>General</option><option ${r.location_type==='Junction/Transit'?'selected':''}>Junction/Transit</option><option ${r.location_type==='School/Hospital'?'selected':''}>School/Hospital</option></select></div></div><button class="btn" id="saveContext">Save verified context and recalculate priorities</button><div class="notice" id="contextNotice"></div>`;$('saveContext').onclick=async()=>{const b=$('saveContext');b.disabled=true;try{await api('/api/reports/'+id+'/context',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({traffic_level:$('ctxTraffic').value,road_importance:$('ctxRoad').value,location_type:$('ctxLocation').value})});await loadReports();showDetails(id);note('deskNotice','Verified road context saved and priorities recalculated.','ok')}catch(e){note('contextNotice',e.message,'err')}finally{b.disabled=false}};$('detailCard').scrollIntoView({behavior:'smooth',block:'start'})}</script>
+  </body>
+</html>
