@@ -1,97 +1,593 @@
-<!doctype html>
+
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>Report Road Damage</title>
-    <style>:root{font-family:Inter,system-ui,Arial;color:#182438;background:#f4f7fb}*{box-sizing:border-box}
-      body{margin:0}.wrap{max-width:900px;margin:0 auto;padding:28px 16px}
-      .top{background:#172741;color:white;padding:22px 24px;border-radius:16px;margin-bottom:18px}
-      .top h1{margin:0 0 6px;font-size:25px}.top p{margin:0;color:#c6d3e7}
-      .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-      .card{background:#fff;border:1px solid #e2e8f0;border-radius:15px;padding:22px;min-width:0}
-      .card h2{font-size:18px;margin:0 0 6px}.muted{color:#718096;font-size:13px}.field{margin:15px 0}
-      .field label{display:block;font-weight:700;font-size:13px;margin-bottom:6px}.field input,
-      .field textarea{width:100%;padding:11px;border:1px solid #d5deea;border-radius:9px;font:inherit;background:#fbfcff}
-      .field textarea{min-height:70px}.btn{width:100%;border:0;border-radius:9px;background:#3567e8;color:white;
-                                           font-weight:750;font:inherit;padding:12px;cursor:pointer;margin-top:8px}
-      .btn.alt{background:#edf2ff;color:#315cc9}.btn:disabled{opacity:.6}
-      .notice{display:none;margin-top:14px;padding:13px;border-radius:9px;overflow-wrap:anywhere}
-      .notice.show{display:block}.ok{background:#e9f8f0;color:#176b4d}.err{background:#fff0f0;color:#a32e3a}
-      .map{height:190px;border-radius:10px;overflow:hidden;background:#eef3f8;display:grid;place-items:center;
-           color:#718096;font-size:13px}
-      .receipt{display:none;margin-top:16px;border:1px solid #cdebdc;background:#f0fbf5;border-radius:12px;padding:16px}
-      .receipt.show{display:block}.ref{font-size:16px;font-weight:800;overflow-wrap:anywhere}
-      .track{margin-top:12px;border-top:1px solid #e4eaf1;padding-top:14px}
-      .status{display:inline-block;padding:6px 10px;background:#fff2d9;color:#975b00;
-              border-radius:30px;font-weight:800;font-size:12px}
-      .footer{margin-top:18px;text-align:center;color:#718096;font-size:12px}
-      .admin{color:#3567e8;text-decoration:none}@media(max-width:700px){
-        .grid{grid-template-columns:1fr}.wrap{padding:16px 12px}.card{padding:17px}}
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RoadWatch | Road Damage Reporting</title>
+
+<style>
+:root {
+    font-family: Inter, Arial, sans-serif;
+    color: #172438;
+    background: #f3f6fb;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, input { font: inherit; }
+
+header {
+    background: #172741;
+    color: white;
+    padding: 22px 5%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 15px;
+}
+header h1 { margin: 0; font-size: 25px; }
+header p { margin: 6px 0 0; color: #c6d3e7; font-size: 13px; }
+header a { color: white; font-size: 13px; }
+
+main { max-width: 1050px; margin: auto; padding: 26px 16px; }
+
+.hero { margin-bottom: 22px; }
+.hero h2 { font-size: 30px; margin: 0 0 10px; }
+.hero p { color: #64748b; line-height: 1.6; max-width: 700px; }
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+}
+.card {
+    background: white;
+    border: 1px solid #e0e7f0;
+    border-radius: 15px;
+    padding: 22px;
+    margin-bottom: 18px;
+}
+.card h3 { margin-top: 0; }
+
+.field { margin: 15px 0; }
+.field label {
+    display: block;
+    font-size: 13px;
+    font-weight: 750;
+    margin-bottom: 7px;
+}
+.field input {
+    display: block;
+    width: 100%;
+    border: 1px solid #d6dfeb;
+    padding: 12px;
+    border-radius: 9px;
+    background: white;
+}
+.hint { color: #718096; font-size: 12px; line-height: 1.5; }
+
+.btn {
+    border: 0;
+    border-radius: 9px;
+    padding: 12px 16px;
+    background: #3567e8;
+    color: white;
+    font-weight: 750;
+    cursor: pointer;
+}
+.btn:disabled { opacity: .6; cursor: wait; }
+.btn.secondary { background: #eaf0ff; color: #315cc9; }
+
+button.full { width: 100%; }
+
+.preview {
+    display: none;
+    width: 100%;
+    max-height: 300px;
+    object-fit: contain;
+    background: #f7f9fc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    margin-top: 12px;
+}
+.preview.show { display: block; }
+
+.notice {
+    display: none;
+    padding: 12px;
+    margin-top: 12px;
+    border-radius: 9px;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.notice.show { display: block; }
+.notice.ok { background: #e9f8f0; color: #176b4d; }
+.notice.err { background: #fff0f0; color: #a32e3a; }
+.notice.info { background: #edf4ff; color: #2856a6; }
+
+.result {
+    display: none;
+    margin-top: 16px;
+    padding: 16px;
+    border-radius: 10px;
+    background: #e9f8f0;
+    color: #176b4d;
+    overflow-wrap: anywhere;
+}
+.result.show { display: block; }
+.result strong { font-size: 19px; }
+
+.track-row {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+}
+.track-row input { flex: 1; min-width: 0; }
+
+.status-pill {
+    display: inline-block;
+    padding: 7px 11px;
+    border-radius: 20px;
+    background: #eaf0ff;
+    color: #315cc9;
+    font-size: 12px;
+    font-weight: 750;
+}
+.steps { margin-top: 18px; }
+.step {
+    padding: 12px;
+    border-left: 3px solid #d6dfeb;
+    margin-left: 5px;
+    color: #718096;
+}
+.step.active {
+    border-left-color: #3567e8;
+    color: #172438;
+    font-weight: 750;
+}
+.step.done { border-left-color: #1d9b6c; color: #176b4d; }
+
+.info-item {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    margin: 15px 0;
+}
+.icon {
+    background: #eaf0ff;
+    color: #315cc9;
+    border-radius: 10px;
+    padding: 10px;
+    font-weight: 800;
+}
+.info-item strong { display: block; margin-bottom: 4px; }
+footer {
+    padding: 24px;
+    text-align: center;
+    color: #718096;
+    font-size: 12px;
+}
+
+@media(max-width:700px) {
+    .grid { grid-template-columns: 1fr; }
+    header { align-items: flex-start; }
+    .hero h2 { font-size: 25px; }
+    .track-row { flex-direction: column; }
+}
 </style>
-  </head>
-  <body>
-    <div class="wrap">
-      <header class="top">
-        <h1>Road Damage Reporting</h1>
-        <p>Help improve road safety. Submit a photo and the location of the damaged road.</p>
-      </header>
-      <div class="grid">
+</head>
+
+<body>
+<header>
+    <div>
+        <h1>RoadWatch</h1>
+        <p>AI-Powered Road Damage Reporting</p>
+    </div>
+    <a href="/authority">Authority Login ↗</a>
+</header>
+
+<main>
+    <section class="hero">
+        <h2>Report road damage. Help improve safer roads.</h2>
+        <p>
+            Upload a photo of a pothole or damaged road and provide its location.
+            The system will create a report for review and maintenance prioritization.
+        </p>
+    </section>
+
+    <div class="grid">
         <section class="card">
-          <h2>Submit a road report</h2>
-          <p class="muted">Upload a road photo and provide its address or current location. Your reference ID will be shown after submission.</p>
-          <form id="reportForm">
-            <div class="field">
-              <label for="image">Road photo *</label>
-              <input id="image" type="file" accept="image/jpeg,image/png,image/webp" required>
-              <p class="muted">JPG, PNG or WebP, maximum 10 MB.</p>
-            </div>
-            <div class="field">
-              <label for="address">Road address or nearby landmark *</label>
-              <input id="address" placeholder="e.g. Near MG Road Metro Station, Bengaluru" required>
-              <button class="btn alt" type="button" id="find">Find address on map</button>
-              <button class="btn alt" type="button" id="locate">Use my current location</button>
-            </div>
-            <div class="field">
-              <label for="lat">Latitude</label>
-              <input id="lat" type="number" step="any" required readonly placeholder="Choose a location above"></div>
-            <div class="field">
-              <label for="lon">Longitude</label>
-              <input id="lon" type="number" step="any" required readonly placeholder="Choose a location above">
-            </div>
-            <div class="map" id="map">Choose a location to preview it here.</div>
-            <div class="field">
-              <label for="notes">Additional notes (optional)</label>
-              <textarea id="notes" placeholder="Describe where the damage is located"></textarea>
-            </div>
-            <button class="btn" id="submit" type="submit">Submit road report</button>
-            <div class="notice" id="notice" role="status"></div>
-          </form>
-          <div class="receipt" id="receipt">
-            <strong>Report submitted successfully</strong>
-            <p class="muted">Save this reference ID to check progress later.</p>
-            <div class="ref" id="newRef"></div>
-            <button class="btn alt" type="button" id="copy">Copy reference ID</button>
-          </div>
-        </section>
-        <section class="card">
-          <h2>Track your report</h2>
-          <p class="muted">Enter the reference ID you received when submitting your report. Only the current status will be displayed.</p>
-          <form id="trackForm">
-            <div class="field">
-              <label for="refInput">Reference ID</label>
-              <input id="refInput" placeholder="Paste your report reference ID" required></div>
-            <button class="btn" type="submit" id="trackBtn">Check report status</button>
-            <div class="notice" id="trackNotice" role="status"></div>
-          </form>
-          <div class="track" id="trackResult" style="display:none">
-            <div class="muted">Report status</div>
-            <p>
-              <span class="status" id="statusText"></span>
+            <h3>Submit a Road Report</h3>
+            <p class="hint">
+                Provide a clear road-damage image and the location where it was observed.
             </p>
-            <div class="muted" id="submittedText"></div>
-          </div>
+
+            <form id="reportForm">
+                <div class="field">
+                    <label for="photo">Road Damage Photo *</label>
+                    <input type="file" id="photo" name="file"
+                           accept="image/*" required>
+                    <img id="preview" class="preview" alt="Selected road damage photo">
+                    <p class="hint">Use a clear image showing the damaged road.</p>
+                </div>
+
+                <div class="field">
+                    <label for="location">Location / Address *</label>
+                    <input id="location" name="location"
+                           placeholder="Street, area, landmark or address"
+                           required>
+                </div>
+
+                <div class="field">
+                    <label>GPS Coordinates</label>
+                    <div class="grid" style="gap:8px">
+                        <input id="latitude" type="number" step="any"
+                               placeholder="Latitude" required>
+                        <input id="longitude" type="number" step="any"
+                               placeholder="Longitude" required>
+                    </div>
+                    <button class="btn secondary" type="button"
+                            id="gpsButton" style="margin-top:10px">
+                        Use My Current Location
+                    </button>
+                    <p class="hint">
+                        Allow location access, or enter the coordinates for the reported place.
+                        Coordinates are required for this version of the reporting API.
+                    </p>
+                </div>
+
+                <button class="btn full" id="submitButton" type="submit">
+                    Submit Road Report
+                </button>
+
+                <div class="notice" id="submitNotice"></div>
+                <div class="result" id="reportResult"></div>
+            </form>
         </section>
-      </div>
-      <div class="footer">Road Damage Detection and Maintenance Prioritization · <a class="admin" href="/authority">Authority access</a></div></div>
-<script>const API=location.origin,$=id=>document.getElementById(id);let lastRef='';function notice(id,msg,type){const n=$(id);n.textContent=msg;n.className='notice show '+type}function setCoords(lat,lon,label){$('lat').value=Number(lat).toFixed(6);$('lon').value=Number(lon).toFixed(6);if(label)$('address').value=label;$('map').innerHTML=`<iframe title="Selected location" style="width:100%;height:100%;border:0" loading="lazy" src="https://www.openstreetmap.org/export/embed.html?bbox=${Number(lon)-.012}%2C${Number(lat)-.009}%2C${Number(lon)+.012}%2C${Number(lat)+.009}&layer=mapnik&marker=${Number(lat)}%2C${Number(lon)}"></iframe>`}async function findAddress(){const q=$('address').value.trim();if(!q){notice('notice','Enter an address or landmark first.','err');return}const b=$('find');b.disabled=true;b.textContent='Searching…';try{const r=await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q='+encodeURIComponent(q));const d=await r.json();if(!d.length)throw Error('Address not found. Add a city or nearby landmark.');setCoords(d[0].lat,d[0].lon,d[0].display_name);notice('notice','Location found. Check the map and submit.','ok')}catch(e){notice('notice',e.message,'err')}finally{b.disabled=false;b.textContent='Find address on map'}}$('find').onclick=findAddress;$('locate').onclick=()=>{if(!navigator.geolocation){notice('notice','Location is unavailable. Search an address instead.','err');return}navigator.geolocation.getCurrentPosition(async p=>{let label='';try{const r=await fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat='+p.coords.latitude+'&lon='+p.coords.longitude);if(r.ok){const d=await r.json();label=d.display_name||''}}catch{}setCoords(p.coords.latitude,p.coords.longitude,label);notice('notice','Location captured. Confirm it on the map.','ok')},()=>notice('notice','Could not access location. Search for an address instead.','err'),{enableHighAccuracy:true,timeout:12000})};$('reportForm').onsubmit=async e=>{e.preventDefault();const f=$('image').files[0];if(!f)return;if(f.size>10*1024*1024){notice('notice','Image must be 10 MB or smaller.','err');return}if(!$('lat').value||!$('lon').value){notice('notice','Choose the location on the map first.','err');return}const b=$('submit');b.disabled=true;b.textContent='Submitting report…';try{const fd=new FormData();fd.append('latitude',$('lat').value);fd.append('longitude',$('lon').value);fd.append('description',($('address').value.trim()+' — '+$('notes').value.trim()).trim());fd.append('file',f);const r=await fetch(API+'/api/reports',{method:'POST',body:fd});const d=await r.json();if(!r.ok)throw Error(d.detail||'Submission failed');lastRef=d.reference_code;$('newRef').textContent=lastRef;$('receipt').classList.add('show');$('refInput').value=lastRef;notice('notice','Your report has been submitted. Save the reference ID to track its status.','ok')}catch(e){notice('notice',e.message,'err')}finally{b.disabled=false;b.textContent='Submit road report'}};$('copy').onclick=async()=>{try{await navigator.clipboard.writeText(lastRef);notice('notice','Reference ID copied.','ok')}catch{notice('notice','Reference ID: '+lastRef,'ok')}};$('trackForm').onsubmit=async e=>{e.preventDefault();const ref=$('refInput').value.trim();const b=$('trackBtn');b.disabled=true;b.textContent='Checking…';$('trackResult').style.display='none';try{const r=await fetch(API+'/api/track/'+encodeURIComponent(ref));const d=await r.json();if(!r.ok)throw Error(d.detail||'Could not find report');$('statusText').textContent=d.status;$('submittedText').textContent='Submitted: '+(d.submitted_at?new Date(d.submitted_at).toLocaleString():'Date unavailable');$('trackResult').style.display='block';notice('trackNotice','Report found.','ok')}catch(e){notice('trackNotice',e.message,'err')}finally{b.disabled=false;b.textContent='Check report status'}};</script></body></html>
+
+        <section class="card">
+            <h3>Track Your Report</h3>
+            <p class="hint">
+                Enter the reference code received after submitting your report.
+            </p>
+
+            <form id="trackForm">
+                <div class="field">
+                    <label for="reference">Report Reference Code</label>
+                    <input id="reference" required
+                           placeholder="Enter your reference code">
+                </div>
+                <button class="btn full" id="trackButton" type="submit">
+                    Check Report Status
+                </button>
+            </form>
+
+            <div class="notice" id="trackNotice"></div>
+            <div id="trackResult"></div>
+
+            <hr style="border:0;border-top:1px solid #e2e8f0;margin:24px 0">
+
+            <h3>What happens next?</h3>
+
+            <div class="info-item">
+                <div class="icon">01</div>
+                <div>
+                    <strong>Report submitted</strong>
+                    <span class="hint">Your image and location are recorded.</span>
+                </div>
+            </div>
+
+            <div class="info-item">
+                <div class="icon">02</div>
+                <div>
+                    <strong>AI-assisted assessment</strong>
+                    <span class="hint">The system analyzes the image and estimates damage severity.</span>
+                </div>
+            </div>
+
+            <div class="info-item">
+                <div class="icon">03</div>
+                <div>
+                    <strong>Authority review</strong>
+                    <span class="hint">Flagged reports may require physical inspection.</span>
+                </div>
+            </div>
+
+            <div class="info-item">
+                <div class="icon">04</div>
+                <div>
+                    <strong>Maintenance progress</strong>
+                    <span class="hint">Track status updates made by the authority.</span>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <section class="card">
+        <h3>Important Information</h3>
+        <p class="hint">
+            AI predictions and priority rankings are estimates from a research prototype.
+            They do not confirm the actual road condition or guarantee a repair schedule.
+            Emergency hazards should also be reported to the relevant local authority.
+        </p>
+    </section>
+</main>
+
+<footer>
+    RoadWatch · AI-Powered Road Damage Detection and Maintenance Prioritization System
+</footer>
+
+<script>
+const API = location.origin;
+const $ = id => document.getElementById(id);
+
+function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, char => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+    })[char]);
+}
+
+function showNotice(id, message, type) {
+    const element = $(id);
+    element.textContent = message;
+    element.className = "notice show " + type;
+}
+
+function clearNotice(id) {
+    $(id).className = "notice";
+}
+
+function validCoordinates(lat, lon) {
+    return Number.isFinite(lat) && Number.isFinite(lon) &&
+        lat >= -90 && lat <= 90 &&
+        lon >= -180 && lon <= 180;
+}
+
+/* Image preview */
+$("photo").addEventListener("change", () => {
+    const file = $("photo").files[0];
+    const preview = $("preview");
+    $("reportResult").className = "result";
+    clearNotice("submitNotice");
+
+    if (!file) {
+        preview.removeAttribute("src");
+        preview.classList.remove("show");
+        return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+        $("photo").value = "";
+        showNotice("submitNotice", "Please select a valid image file.", "err");
+        preview.classList.remove("show");
+        return;
+    }
+
+    preview.src = URL.createObjectURL(file);
+    preview.classList.add("show");
+});
+
+/* Current GPS location */
+$("gpsButton").addEventListener("click", () => {
+    if (!navigator.geolocation) {
+        showNotice("submitNotice",
+            "Geolocation is not supported by this browser.", "err");
+        return;
+    }
+
+    $("gpsButton").disabled = true;
+    $("gpsButton").textContent = "Getting location...";
+
+    navigator.geolocation.getCurrentPosition(
+        position => {
+            $("latitude").value = position.coords.latitude;
+            $("longitude").value = position.coords.longitude;
+            $("gpsButton").disabled = false;
+            $("gpsButton").textContent = "Use My Current Location";
+            showNotice("submitNotice",
+                "Current coordinates added. Verify they match the damaged road.",
+                "ok");
+        },
+        error => {
+            $("gpsButton").disabled = false;
+            $("gpsButton").textContent = "Use My Current Location";
+            showNotice("submitNotice",
+                "Could not get your location. Allow browser location access or enter coordinates manually.",
+                "err");
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+});
+
+/* Submit report */
+$("reportForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    clearNotice("submitNotice");
+    $("reportResult").className = "result";
+
+    const file = $("photo").files[0];
+    const locationText = $("location").value.trim();
+    const latitude = Number($("latitude").value);
+    const longitude = Number($("longitude").value);
+
+    if (!file || !file.type.startsWith("image/")) {
+        showNotice("submitNotice", "Select a valid road damage image.", "err");
+        return;
+    }
+
+    if (!locationText) {
+        showNotice("submitNotice", "Enter the road location or address.", "err");
+        return;
+    }
+
+    if (!validCoordinates(latitude, longitude)) {
+        showNotice("submitNotice",
+            "Enter valid latitude and longitude coordinates.", "err");
+        return;
+    }
+
+    const button = $("submitButton");
+    button.disabled = true;
+    button.textContent = "Analyzing and submitting...";
+
+    try {
+        const form = new FormData();
+
+        // The backend endpoint expects the uploaded file under "file".
+        form.append("file", file);
+        form.append("location", locationText);
+        form.append("latitude", String(latitude));
+        form.append("longitude", String(longitude));
+
+        const response = await fetch(API + "/api/reports", {
+            method: "POST",
+            body: form
+        });
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+            throw new Error(data.detail || "Could not submit the report.");
+        }
+
+        const reference =
+            data.reference_code || data.reference_id || data.report_id;
+
+        if (!reference) {
+            throw new Error(
+                "The server accepted a response but did not return a report reference. Contact the administrator."
+            );
+        }
+
+        $("reportResult").innerHTML = `
+            <strong>Report Submitted Successfully</strong>
+            <p>Your report reference is:</p>
+            <strong>${escapeHtml(reference)}</strong>
+            <p>Save this code to track your report status.</p>
+            <button class="btn secondary" type="button" id="copyReference">
+                Copy Reference
+            </button>
+            <button class="btn" type="button" id="trackThisReport">
+                Track This Report
+            </button>
+        `;
+
+        $("reportResult").className = "result show";
+
+        $("copyReference").addEventListener("click", async () => {
+            try {
+                await navigator.clipboard.writeText(String(reference));
+                $("copyReference").textContent = "Copied!";
+            } catch {
+                $("reference").value = String(reference);
+                $("reference").focus();
+                $("reference").select();
+                showNotice("submitNotice",
+                    "Reference placed in the tracking field. Copy it manually.",
+                    "info");
+            }
+        });
+
+        $("trackThisReport").addEventListener("click", () => {
+            $("reference").value = String(reference);
+            $("trackForm").requestSubmit();
+        });
+
+        $("reportForm").reset();
+        $("preview").removeAttribute("src");
+        $("preview").classList.remove("show");
+
+    } catch (error) {
+        showNotice("submitNotice", error.message, "err");
+    } finally {
+        button.disabled = false;
+        button.textContent = "Submit Road Report";
+    }
+});
+
+/* Track report status */
+$("trackForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    clearNotice("trackNotice");
+    $("trackResult").innerHTML = "";
+
+    const reference = $("reference").value.trim();
+
+    if (!reference) {
+        showNotice("trackNotice", "Enter a report reference code.", "err");
+        return;
+    }
+
+    const button = $("trackButton");
+    button.disabled = true;
+    button.textContent = "Checking status...";
+
+    try {
+        const response = await fetch(
+            API + "/api/track/" + encodeURIComponent(reference)
+        );
+
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+            throw new Error(data.detail || "Could not find this report.");
+        }
+
+        const status = data.report_status || data.status || "Reported";
+
+        const steps = [
+            "Reported",
+            "Under Review",
+            "Repair Scheduled",
+            "In Progress",
+            "Repaired"
+        ];
+
+        const currentIndex = steps.indexOf(status);
+
+        const timeline = steps.map((step, index) => {
+            let className = "step";
+
+            if (currentIndex >= 0 && index < currentIndex) {
+                className += " done";
+            } else if (index === currentIndex) {
+                className += " active";
+            }
+
+            return `<div class="${className}">${escapeHtml(step)}</div>`;
+        }).join("");
+
+        $("trackResult").innerHTML = `
+            <div class="card" style="margin-top:16px;padding:15px">
+                <p class="hint">Report Reference</p>
+                <strong>${escapeHtml(data.reference_code || reference)}</strong>
+
+                <p style="margin-top:18px">Current Status</p>
+                <span class="status-pill">${escapeHtml(status)}</span>
+
+                <div class="steps">${timeline}</div>
+
+                <p class="hint">
+                    Status reflects the latest information available from the
+                    reporting system. It does not guarantee a repair date.
+                </p>
+            </div>
+        `;
+
+        showNotice("trackNotice", "Report status retrieved.", "ok");
+
+    } catch (error) {
+        showNotice("trackNotice", error.message, "err");
+    } finally {
+        button.disabled = false;
+        button.textContent = "Check Report Status";
+    }
+});
+</script>
+</body>
+</html>
