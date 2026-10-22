@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Road Damage | Operations Dashboard</title>
+<style>
+:root{--navy:#15243b;--blue:#3567e8;--ink:#182438;--muted:#718096;--bg:#f4f7fb;--line:#e5eaf2;--white:#fff;--green:#138a62;--amber:#b86b0b;--red:#c43c48}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+.layout{min-height:100vh;display:grid;grid-template-columns:235px 1fr}.sidebar{background:var(--navy);color:#e9eef8;padding:25px 16px;display:flex;flex-direction:column;gap:25px}.brand{display:flex;gap:11px;align-items:center;padding:0 8px}.brand-icon{width:38px;height:38px;border-radius:12px;background:#3567e8;display:grid;place-items:center;font-size:20px}.brand strong{display:block;font-size:15px}.brand small{color:#aebbd0;font-size:11px}.nav-label{font-size:10px;letter-spacing:1.5px;color:#91a1bc;padding:0 12px;margin-bottom:7px}.nav-item{padding:11px 12px;border-radius:9px;color:#c8d3e5;margin:3px 0;display:flex;gap:11px;align-items:center}.nav-item.active{background:#263a59;color:white}.nav-item span:first-child{width:18px;text-align:center}.side-note{margin-top:auto;border:1px solid #344762;border-radius:12px;padding:13px;color:#c4d0e0;font-size:12px}.side-note strong{display:block;color:#fff;margin-bottom:5px}
+main{min-width:0;padding:28px 32px 40px}.topbar{display:flex;justify-content:space-between;align-items:center;gap:15px;margin-bottom:26px}.eyebrow{color:var(--blue);font-size:11px;font-weight:800;letter-spacing:1.4px;text-transform:uppercase}.topbar h1{font-size:27px;line-height:1.2;margin:5px 0 7px;letter-spacing:-.7px}.sub{color:var(--muted);margin:0}.live{background:#e4f6ed;color:#16734f;padding:7px 11px;border-radius:30px;font-size:12px;font-weight:700;white-space:nowrap}.live:before{content:"";display:inline-block;width:7px;height:7px;background:#20a56f;border-radius:50%;margin-right:7px}
+.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:15px;margin-bottom:20px}.card{background:var(--white);border:1px solid var(--line);border-radius:15px;padding:19px;box-shadow:0 3px 12px #1b315008;min-width:0}.metric-top{display:flex;align-items:center;justify-content:space-between;color:var(--muted);font-size:12px;font-weight:600}.metric-icon{height:34px;width:34px;border-radius:10px;background:#edf2ff;color:var(--blue);display:grid;place-items:center;font-size:17px}.metric{font-size:29px;font-weight:800;letter-spacing:-.8px;margin:13px 0 3px}.metric-foot{font-size:11px;color:var(--muted)}.section-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:15px}.section-head h2{font-size:16px;margin:0 0 4px}.section-head p{margin:0;color:var(--muted);font-size:12px}.tag{font-size:10px;font-weight:800;border-radius:20px;padding:5px 8px;background:#edf2ff;color:#345fd1;white-space:nowrap}
+.content-grid{display:grid;grid-template-columns:minmax(300px,0.95fr) minmax(360px,1.2fr);gap:18px;align-items:start}.form-card,.reports-card{padding:22px}.field{margin:13px 0}.field label{display:block;font-size:12px;font-weight:700;margin-bottom:6px}.field input,.field textarea{width:100%;border:1px solid #dce3ed;background:#fbfcfe;border-radius:9px;padding:11px 12px;color:var(--ink);font:inherit;outline:none}.field input:focus,.field textarea:focus{border-color:#7d9af4;box-shadow:0 0 0 3px #3567e818}.field textarea{resize:vertical;min-height:72px}.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}.filebox{border:1px dashed #b7c5db;background:#f8faff;border-radius:11px;padding:15px;text-align:center}.filebox input{font-size:12px;width:100%}.filebox p{margin:5px 0 0;color:var(--muted);font-size:11px}.btn{border:0;border-radius:9px;background:var(--blue);color:#fff;font-weight:750;padding:12px 16px;cursor:pointer;font:inherit;font-weight:750}.btn:disabled{opacity:.6;cursor:wait}.btn.full{width:100%;margin-top:8px}.secondary{background:#edf2ff;color:#315cc9}.hint{font-size:11px;color:var(--muted);margin-top:10px}.notice{display:none;border-radius:10px;padding:12px;margin-top:14px;font-size:12px;overflow-wrap:anywhere}.notice.show{display:block}.notice.ok{background:#e9f8f0;color:#176b4d}.notice.err{background:#fff0f0;color:#a32e3a}
+.result{display:none;border:1px solid var(--line);border-radius:12px;padding:15px;margin-top:16px}.result.show{display:block}.result h3{font-size:14px;margin:0 0 8px}.result-meta{font-size:12px;color:var(--muted);margin-bottom:12px}.priority{display:inline-block;border-radius:30px;padding:5px 9px;font-size:11px;font-weight:800}.priority.high{background:#ffebed;color:#b72f3d}.priority.medium{background:#fff2d9;color:#975b00}.priority.low{background:#e4f6ed;color:#14734f}.detection{border-top:1px solid var(--line);padding:10px 0;font-size:12px;display:flex;justify-content:space-between;gap:10px}.detection:first-of-type{border-top:0}
+.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;text-align:left;white-space:nowrap}th{font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:#7c899d;background:#f8faff;padding:12px 10px}td{border-top:1px solid #edf0f5;padding:13px 10px;font-size:12px}td:first-child{font-weight:750;color:#315cc9}.status{display:inline-block;padding:5px 8px;border-radius:20px;background:#fff2d9;color:#975b00;font-size:10px;font-weight:800}.status-select{max-width:150px;border:1px solid #dce3ed;border-radius:7px;padding:7px;font:inherit;font-size:11px;background:#fff}.priority.high{background:#ffebed;color:#b72f3d}.priority.medium{background:#fff2d9;color:#975b00}.priority.low{background:#e4f6ed;color:#14734f}.empty{text-align:center;color:var(--muted);padding:30px 10px}.table-footer{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:12px;color:var(--muted);font-size:11px}.refresh{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 10px;cursor:pointer;color:#40516b;font:inherit;font-weight:700}
+.map-card{margin-top:18px}.map{height:260px;background:#eef3f8;border-radius:11px;overflow:hidden;display:grid;place-items:center;color:var(--muted);text-align:center;padding:20px}.map iframe{width:100%;height:100%;border:0}.footer{color:#8995a7;font-size:11px;text-align:center;margin-top:22px}
+@media(max-width:1050px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.content-grid{grid-template-columns:1fr}.layout{grid-template-columns:190px 1fr}main{padding:24px}}
+@media(max-width:680px){.layout{display:block}.sidebar{padding:13px 14px;display:block}.brand{padding:0}.sidebar .nav-label,.sidebar nav,.side-note{display:none}main{padding:20px 14px}.topbar{align-items:flex-start}.topbar h1{font-size:23px}.grid{gap:10px}.card{padding:14px}.metric{font-size:25px}.two{grid-template-columns:1fr 1fr}.content-grid{display:block}.form-card{margin-bottom:15px}.reports-card{padding:15px}}
+</style>
+</head>
+<body>
+<div class="layout">
+<aside class="sidebar">
+  <div class="brand"><div class="brand-icon">⌁</div><div><strong>Road Intelligence</strong><small>MAINTENANCE CONSOLE</small></div></div>
+  <div><div class="nav-label">WORKSPACE</div><nav><div class="nav-item active"><span>▦</span> Overview</div><div class="nav-item"><span>＋</span> Submit a report</div><div class="nav-item"><span>⌖</span> Road locations</div><div class="nav-item"><span>✓</span> Repair tracking</div></nav></div>
+  <div class="side-note"><strong>How to use this dashboard</strong>1. Upload a road photo.<br>2. Enter its location.<br>3. Review AI findings.<br>4. Check saved reports and plan follow-up.</div>
+</aside>
+<main>
+  <header class="topbar"><div><div class="eyebrow">ROAD MAINTENANCE · OVERVIEW</div><h1>Good evening. Here's your road status.</h1><p class="sub">Detect damage, record locations, and keep maintenance reports organized.</p></div><div class="live">API connected</div></header>
+  <section class="grid">
+    <article class="card"><div class="metric-top">Total reports <span class="metric-icon">▤</span></div><div class="metric" id="totalReports">—</div><div class="metric-foot">All reports returned by the database</div></article>
+    <article class="card"><div class="metric-top">Awaiting action <span class="metric-icon">◷</span></div><div class="metric" id="openReports">—</div><div class="metric-foot">Reports not marked as repaired</div></article>
+    <article class="card"><div class="metric-top">Marked repaired <span class="metric-icon">✓</span></div><div class="metric" id="repairedReports">—</div><div class="metric-foot">Based on saved report status</div></article>
+    <article class="card"><div class="metric-top">Latest AI detections <span class="metric-icon">◎</span></div><div class="metric" id="latestDetections">—</div><div class="metric-foot">From your most recent upload in this session</div></article>
+  </section>
+  <section class="content-grid">
+    <article class="card form-card" id="submitSection">
+      <div class="section-head"><div><h2>Submit a road report</h2><p>Upload a road image and identify the road location. The system assesses damage; authorities verify road context.</p></div><span class="tag">AI-POWERED</span></div>
+      <form id="reportForm">
+        <div class="field"><label for="image">Road photo *</label><div class="filebox"><input id="image" name="file" type="file" accept="image/jpeg,image/png,image/webp" required><p>JPG, PNG or WebP · maximum 10 MB</p></div></div>
+        <div class="field"><label for="address">Road location or nearby landmark *</label><input id="address" name="address" type="text" placeholder="Example: Near MG Road Metro Station, Bengaluru" required><button class="btn secondary" id="findAddressBtn" type="button" style="margin-top:8px;width:100%">Find this address on map</button><p class="hint">Type an address/landmark, or use your device location below.</p></div>
+        <button class="btn secondary full" id="locateBtn" type="button">◎ Use my current location</button>
+        <div class="two"><div class="field"><label for="latitude">Latitude (auto-filled)</label><input id="latitude" name="latitude" type="number" step="any" min="-90" max="90" placeholder="Filled from map" required></div><div class="field"><label for="longitude">Longitude (auto-filled)</label><input id="longitude" name="longitude" type="number" step="any" min="-180" max="180" placeholder="Filled from map" required></div></div>
+        <div id="locationMap" class="map" style="height:190px;margin-bottom:12px">Choose your location to preview it here.</div>
+        <div class="field"><label for="description">Additional damage notes</label><textarea id="description" name="description" placeholder="Example: Deep pothole near the bus stop"></textarea></div>
+        <button class="btn full" id="submitBtn" type="submit">Analyze image & submit report →</button>
+        <div class="hint">Use current location or search for a road address/landmark. Traffic and road importance are assessed separately by the system and authority workflow.</div>
+      </form>
+      <div class="notice" id="formNotice" role="status"></div>
+      <div class="result" id="resultBox" aria-live="polite"></div>
+    </article>
+    <article class="card reports-card">
+      <div class="section-head"><div><h2>Authority control desk</h2><p>Location, AI priority, detection count and repair status for each report.</p></div><button class="refresh" id="refreshBtn" type="button">↻ Refresh</button></div>
+      <div class="field"><label for="authorityPin">Authority access PIN</label><input id="authorityPin" type="password" autocomplete="current-password" placeholder="Enter the PIN configured by the administrator"><p class="hint">Required only to change a report's status. Set AUTHORITY_PIN in Render environment variables.</p></div>
+      <div class="table-wrap"><table><thead><tr><th>Reference / ID</th><th>Location</th><th>Severity</th><th>AI confidence</th><th>Uncertainty / decision</th><th>Priority (TOPSIS)</th><th>Road context</th><th>Findings</th><th>Submitted</th><th>Repair status</th></tr></thead><tbody id="reportsBody"><tr><td colspan="10" class="empty">Loading saved reports…</td></tr></tbody></table></div>
+      <div class="table-footer"><span id="reportCount">Connecting to reports API…</span><span>Newest first</span></div>
+      <div class="map-card"><div class="section-head" style="margin-top:22px"><div><h2>Report locations</h2><p>Map of saved report coordinates.</p></div></div><div id="map" class="map">Loading report locations…</div></div>
+    </article>
+  </section>
+  <div class="footer">AI-Powered Road Damage Detection and Maintenance Prioritization System · Prototype dashboard</div>
+</main>
+</div>
+<script>
+const API = window.location.origin;
+let reportsCache = [];
+const $ = id => document.getElementById(id);
+function esc(v){return String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function fmtDate(v){if(!v)return '—';const d=new Date(v);return isNaN(d)?'—':d.toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});}
+function statusLabel(v){return String(v||'Reported').replace(/_/g,' ');}
+function setNotice(msg,type){const n=$('formNotice');n.textContent=msg;n.className='notice show '+type;}
+async function loadReports(){
+  $('reportsBody').innerHTML='<tr><td colspan="10" class="empty">Loading saved reports…</td></tr>';
+  try{
+    const r=await fetch(API+'/api/reports');
+    if(!r.ok) throw new Error('Reports API returned '+r.status);
+    reportsCache=await r.json();
+    $('totalReports').textContent=reportsCache.length;
+    const repaired=reportsCache.filter(x=>/repaired|resolved|closed|complete/i.test(x.report_status||'')).length;
+    $('repairedReports').textContent=repaired;
+    $('openReports').textContent=reportsCache.length-repaired;
+    $('reportCount').textContent=reportsCache.length+' report(s) loaded';
+    if(!reportsCache.length){$('reportsBody').innerHTML='<tr><td colspan="10" class="empty">No reports yet. Submit the first road photo using the form.</td></tr>';}
+    else{
+      const statuses=['Reported','Under Review','Repair Scheduled','In Progress','Repaired'];
+      $('reportsBody').innerHTML=reportsCache.slice(0,30).map(x=>{
+        const p=String(x.priority||'Pending').toLowerCase();
+        const pClass=['high','medium','low'].includes(p)?p:'medium';
+        const opts=statuses.map(s=>`<option value="${s}" ${String(x.report_status||'Reported').toLowerCase()===s.toLowerCase()?'selected':''}>${s}</option>`).join('');
+        return `<tr><td title="${esc(x.reference_code)}">#${esc(x.report_id)}<br><span style="color:#8190a5">${esc(String(x.reference_code||'').slice(0,8))}…</span></td><td><a href="https://www.openstreetmap.org/?mlat=${encodeURIComponent(x.latitude)}&mlon=${encodeURIComponent(x.longitude)}#map=17/${encodeURIComponent(x.latitude)}/${encodeURIComponent(x.longitude)}" target="_blank" rel="noopener">${Number(x.latitude).toFixed(4)}, ${Number(x.longitude).toFixed(4)} ↗</a></td><td>${esc(x.severity||'Pending')}</td><td>${x.avg_confidence==null?'—':Math.round(Number(x.avg_confidence)*100)+'%'}<br><span style="color:#8190a5">Raw model confidence</span></td><td><span class="priority ${x.manual_verification_required?'medium':'low'}">${esc(x.uncertainty_level||'Unassessed')}</span><br><span style="color:#a05a0a">${esc(x.decision_route||'Review')}</span></td><td><span class="priority ${pClass}">${esc(x.priority||'Pending')}</span><br><span style="color:#8190a5">${esc(x.priority_score==null?'—':x.priority_score+'/100')}</span></td><td><select class="status-select context-traffic" aria-label="Traffic level for report ${esc(x.report_id)}"><option ${x.traffic_level==='Low'?'selected':''}>Low</option><option ${x.traffic_level==='Medium'?'selected':''}>Medium</option><option ${x.traffic_level==='High'?'selected':''}>High</option></select><select class="status-select context-road" aria-label="Road importance for report ${esc(x.report_id)}" style="margin-top:4px"><option ${x.road_importance==='Local'?'selected':''}>Local</option><option ${x.road_importance==='Collector'?'selected':''}>Collector</option><option ${x.road_importance==='Major'?'selected':''}>Major</option></select><select class="status-select context-location" aria-label="Location type for report ${esc(x.report_id)}" style="margin-top:4px"><option ${x.location_type==='General'?'selected':''}>General</option><option ${x.location_type==='Junction/Transit'?'selected':''}>Junction/Transit</option><option ${x.location_type==='School/Hospital'?'selected':''}>School/Hospital</option></select><button class="refresh save-context" type="button" data-report-id="${esc(x.report_id)}" style="margin-top:4px">Save context</button><div class="hint">${esc(x.context_status||'Pending verification')}</div></td><td>${Number(x.detection_count||0)} object(s)<br><span style="color:#8190a5">${esc(x.location_type||'Location context pending')}</span></td><td>${esc(fmtDate(x.submitted_at))}</td><td><select class="status-select" data-report-id="${esc(x.report_id)}" data-old-status="${esc(x.report_status||'Reported')}">${opts}</select></td></tr>`;
+      }).join('');
+      document.querySelectorAll('.status-select[data-report-id]').forEach(sel=>{if(!sel.classList.contains('context-traffic')&&!sel.classList.contains('context-road')&&!sel.classList.contains('context-location'))sel.addEventListener('change',()=>updateStatus(sel));});
+      document.querySelectorAll('.save-context').forEach(btn=>btn.addEventListener('click',()=>updateContext(btn)));
+    }
+    renderMap(reportsCache);
+    document.querySelector('.live').textContent='API connected';
+    document.querySelector('.live').style.background='';document.querySelector('.live').style.color='';
+  }catch(e){
+    $('reportsBody').innerHTML='<tr><td colspan="10" class="empty">Could not load reports. Check that the backend is awake and /api/reports is available.</td></tr>';
+    $('reportCount').textContent='API connection issue';
+    document.querySelector('.live').textContent='API unavailable';
+    document.querySelector('.live').style.background='#fff0f0';document.querySelector('.live').style.color='#a32e3a';
+  }
+}
+async function updateStatus(sel){
+  const pin=$('authorityPin').value.trim();
+  if(!pin){alert('Enter the authority access PIN first.');sel.value=sel.dataset.oldStatus;return;}
+  const newStatus=sel.value;
+  sel.disabled=true;
+  try{
+    const r=await fetch(API+'/api/reports/'+encodeURIComponent(sel.dataset.reportId)+'/status',{
+      method:'PATCH',headers:{'Content-Type':'application/json','X-Authority-PIN':pin},
+      body:JSON.stringify({report_status:newStatus})
+    });
+    const data=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(data.detail||'Status update failed ('+r.status+').');
+    sel.dataset.oldStatus=newStatus;
+    await loadReports();
+  }catch(e){alert('Could not update status: '+e.message);sel.value=sel.dataset.oldStatus;}
+  finally{sel.disabled=false;}
+}
+async function updateContext(btn){
+  const pin=$('authorityPin').value.trim();
+  if(!pin){alert('Enter the authority access PIN first.');return;}
+  const id=btn.dataset.reportId;
+  const row=btn.closest('tr');
+  const payload={
+    traffic_level:row.querySelector('.context-traffic').value,
+    road_importance:row.querySelector('.context-road').value,
+    location_type:row.querySelector('.context-location').value
+  };
+  btn.disabled=true;btn.textContent='Saving…';
+  try{
+    const r=await fetch(API+'/api/reports/'+encodeURIComponent(id)+'/context',{
+      method:'PATCH',headers:{'Content-Type':'application/json','X-Authority-PIN':pin},
+      body:JSON.stringify(payload)
+    });
+    const data=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(data.detail||'Context update failed ('+r.status+').');
+    await loadReports();
+  }catch(e){alert('Could not save road context: '+e.message);}
+  finally{btn.disabled=false;btn.textContent='Save context';}
+}
+function setCoords(lat,lon,address){
+  $('latitude').value=Number(lat).toFixed(6);$('longitude').value=Number(lon).toFixed(6);
+  if(address)$('address').value=address;
+  $('locationMap').innerHTML=`<iframe title="Selected road location" loading="lazy" src="https://www.openstreetmap.org/export/embed.html?bbox=${Number(lon)-.012}%2C${Number(lat)-.009}%2C${Number(lon)+.012}%2C${Number(lat)+.009}&layer=mapnik&marker=${Number(lat)}%2C${Number(lon)}"></iframe>`;
+}
+async function findAddress(){
+  const address=$('address').value.trim();
+  if(!address){setNotice('Enter a street address or landmark first.','err');return;}
+  const b=$('findAddressBtn');b.disabled=true;b.textContent='Finding location…';
+  try{
+    const r=await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q='+encodeURIComponent(address));
+    if(!r.ok)throw new Error('Address lookup is unavailable. Try using current location.');
+    const data=await r.json();if(!data.length)throw new Error('Address not found. Add the city or a nearby landmark and try again.');
+    setCoords(data[0].lat,data[0].lon,data[0].display_name);
+    setNotice('Location found. Check the map, then submit your report.','ok');
+  }catch(e){setNotice(e.message,'err');}
+  finally{b.disabled=false;b.textContent='Find this address on map';}
+}
+$('findAddressBtn').addEventListener('click',findAddress);
+$('locateBtn').addEventListener('click',()=>{
+  if(!navigator.geolocation){setNotice('This browser does not support location access. Enter an address instead.','err');return;}
+  const b=$('locateBtn');b.disabled=true;b.textContent='Getting your location…';
+  navigator.geolocation.getCurrentPosition(async pos=>{
+    const {latitude,longitude}=pos.coords;
+    try{
+      let address='';
+      const r=await fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat='+latitude+'&lon='+longitude);
+      if(r.ok){const d=await r.json();address=d.display_name||'';}
+      setCoords(latitude,longitude,address);
+      setNotice('Current location captured. Confirm it on the map before submitting.','ok');
+    }catch(e){setCoords(latitude,longitude,'');setNotice('Coordinates captured. You can still submit the report.','ok');}
+    finally{b.disabled=false;b.textContent='◎ Use my current location';}
+  },err=>{
+    const messages={1:'Location permission was denied. Enter an address or landmark instead.',2:'Your device could not determine the location. Try address search.',3:'Location request timed out. Try again or search an address.'};
+    setNotice(messages[err.code]||'Location unavailable. Enter an address instead.','err');b.disabled=false;b.textContent='◎ Use my current location';
+  },{enableHighAccuracy:true,timeout:12000,maximumAge:60000});
+});
+function priorityFor(detections){
+  if(!detections.length)return {name:'Low',cls:'low',score:10,reason:'No damage objects were detected. Treat as low model evidence, not proof that the road is safe.'};
+  let score=0;
+  for(const d of detections){
+    const t=String(d.damage_type||'').toLowerCase();
+    const base=t.includes('pothole')?30:(t.includes('crack')?22:16);
+    const conf=Math.max(0,Math.min(1,Number(d.confidence)||0));
+    const b=d.bbox_xyxy||[];
+    const area=(b.length===4)?Math.max(0,b[2]-b[0])*Math.max(0,b[3]-b[1]):0;
+    score+=base+conf*25+Math.min(15,area/50000*15);
+  }
+  score=Math.round(Math.min(100,score));
+  return {name:score>=70?'High':score>=40?'Medium':'Low',cls:score>=70?'high':score>=40?'medium':'low',score,reason:'Fallback estimate only. The server combines damage evidence with traffic, road importance, nearby reports and confidence uncertainty.'};
+}
+function showResult(data){
+  const ds=data.detections||[];const p=priorityFor(ds);
+  $('latestDetections').textContent=ds.length;
+  $('resultBox').className='result show';
+  $('resultBox').innerHTML=`<h3>AI analysis complete</h3><div class="result-meta">Reference: <strong>${esc(data.reference_code||'—')}</strong></div><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px"><span>Suggested maintenance priority</span><span class="priority ${p.cls}">${esc(data.priority||p.name)} · ${esc(data.priority_score==null?p.score:data.priority_score)}/100</span></div><div class="hint">${esc(p.reason)}</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0"><div style="background:#f7f9fc;padding:10px;border-radius:8px"><div class="hint">Mean YOLO confidence</div><strong>${data.avg_confidence==null?(ds.length?Math.round(ds.reduce((s,d)=>s+(Number(d.confidence)||0),0)/ds.length*100)+'%':'—'):Math.round(Number(data.avg_confidence)*100)+'%'}</strong></div><div style="background:#f7f9fc;padding:10px;border-radius:8px"><div class="hint">Uncertainty / review</div><strong>${esc(data.uncertainty_level||'Needs assessment')}</strong></div></div><div class="hint">${data.manual_verification_required?'⚠ Manual verification recommended before maintenance decisions.':'Review the AI result before making a maintenance decision.'}</div><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px"><div style="border:1px solid #e5eaf2;padding:10px;border-radius:8px"><div class="hint">Conventional baseline</div><strong>${esc(data.conventional_score==null?'—':data.conventional_score+'/100')}</strong></div><div style="border:1px solid #e5eaf2;padding:10px;border-radius:8px"><div class="hint">Context-aware score</div><strong>${esc(data.priority_score==null?p.score+'/100':data.priority_score+'/100')}</strong></div></div><div class="hint" style="margin-top:7px">Road context: ${esc(data.context_status||'pending authority/system verification')}; nearby reports: ${esc(data.nearby_report_count==null?'not available':data.nearby_report_count)}.</div><div style="margin-top:12px;font-weight:750;font-size:12px">${ds.length} damage object(s) detected</div>${ds.length?ds.map((d,i)=>`<div class="detection"><span>${esc(d.damage_type||'Damage')} <span style="color:#8995a7">#${i+1}</span></span><strong>${Math.round((Number(d.confidence)||0)*100)}% confidence</strong></div>`).join(''):'<div class="hint">No damage objects detected. Try a clearer, closer road image.</div>'}`;
+}
+$('reportForm').addEventListener('submit',async e=>{
+  e.preventDefault();const btn=$('submitBtn');const file=$('image').files[0];
+  if(!file){setNotice('Please choose a road image first.','err');return;}
+  if(file.size>10*1024*1024){setNotice('Image is larger than 10 MB. Choose a smaller file.','err');return;}
+  btn.disabled=true;btn.textContent='Analyzing image…';$('resultBox').className='result';setNotice('Uploading image and running AI detection. Please wait…','ok');
+  try{
+    if(!$('latitude').value||!$('longitude').value)throw new Error('Choose the road location by searching its address or using current location first.');
+    const fd=new FormData();fd.append('latitude',$('latitude').value);fd.append('longitude',$('longitude').value);fd.append('description',($('address').value.trim()?$('address').value.trim()+' — ':'')+$('description').value);fd.append('file',file);
+    const r=await fetch(API+'/api/reports',{method:'POST',body:fd});
+    const data=await r.json().catch(()=>({detail:'Unexpected server response'}));
+    if(!r.ok)throw new Error(data.detail||'Submission failed ('+r.status+')');
+    setNotice('Report saved successfully. Reference: '+data.reference_code,'ok');showResult(data);await loadReports();
+  }catch(err){setNotice('Could not submit report: '+err.message,'err');}
+  finally{btn.disabled=false;btn.textContent='Analyze image & submit report →';}
+});
+$('refreshBtn').addEventListener('click',loadReports);
+document.querySelectorAll('.nav-item').forEach((item,i)=>item.addEventListener('click',()=>{
+  if(i===1){$('submitSection').scrollIntoView({behavior:'smooth',block:'start'});$('image').focus();}
+  else if(i===0)window.scrollTo({top:0,behavior:'smooth'});
+  else if(i===2){document.querySelector('.map-card').scrollIntoView({behavior:'smooth',block:'start'});}
+  else if(i===3){document.querySelector('.reports-card').scrollIntoView({behavior:'smooth',block:'start'});}
+}));
+loadReports();
+</script>
+</body>
+</html>
