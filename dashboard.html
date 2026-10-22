@@ -1,4 +1,100 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Report Road Damage</title><style>
-:root{font-family:Inter,system-ui,Arial;color:#182438;background:#f4f7fb}*{box-sizing:border-box}body{margin:0}.wrap{max-width:900px;margin:0 auto;padding:28px 16px}.top{background:#172741;color:white;padding:22px 24px;border-radius:16px;margin-bottom:18px}.top h1{margin:0 0 6px;font-size:25px}.top p{margin:0;color:#c6d3e7}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{background:#fff;border:1px solid #e2e8f0;border-radius:15px;padding:22px;min-width:0}.card h2{font-size:18px;margin:0 0 6px}.muted{color:#718096;font-size:13px}.field{margin:15px 0}.field label{display:block;font-weight:700;font-size:13px;margin-bottom:6px}.field input,.field textarea{width:100%;padding:11px;border:1px solid #d5deea;border-radius:9px;font:inherit;background:#fbfcff}.field textarea{min-height:70px}.btn{width:100%;border:0;border-radius:9px;background:#3567e8;color:white;font-weight:750;font:inherit;padding:12px;cursor:pointer;margin-top:8px}.btn.alt{background:#edf2ff;color:#315cc9}.btn:disabled{opacity:.6}.notice{display:none;margin-top:14px;padding:13px;border-radius:9px;overflow-wrap:anywhere}.notice.show{display:block}.ok{background:#e9f8f0;color:#176b4d}.err{background:#fff0f0;color:#a32e3a}.map{height:190px;border-radius:10px;overflow:hidden;background:#eef3f8;display:grid;place-items:center;color:#718096;font-size:13px}.receipt{display:none;margin-top:16px;border:1px solid #cdebdc;background:#f0fbf5;border-radius:12px;padding:16px}.receipt.show{display:block}.ref{font-size:16px;font-weight:800;overflow-wrap:anywhere}.track{margin-top:12px;border-top:1px solid #e4eaf1;padding-top:14px}.status{display:inline-block;padding:6px 10px;background:#fff2d9;color:#975b00;border-radius:30px;font-weight:800;font-size:12px}.footer{margin-top:18px;text-align:center;color:#718096;font-size:12px}.admin{color:#3567e8;text-decoration:none}@media(max-width:700px){.grid{grid-template-columns:1fr}.wrap{padding:16px 12px}.card{padding:17px}}
-</style></head><body><div class="wrap"><header class="top"><h1>Road Damage Reporting</h1><p>Help improve road safety. Submit a photo and the location of the damaged road.</p></header><div class="grid"><section class="card"><h2>Submit a road report</h2><p class="muted">Upload a road photo and provide its address or current location. Your reference ID will be shown after submission.</p><form id="reportForm"><div class="field"><label for="image">Road photo *</label><input id="image" type="file" accept="image/jpeg,image/png,image/webp" required><p class="muted">JPG, PNG or WebP, maximum 10 MB.</p></div><div class="field"><label for="address">Road address or nearby landmark *</label><input id="address" placeholder="e.g. Near MG Road Metro Station, Bengaluru" required><button class="btn alt" type="button" id="find">Find address on map</button><button class="btn alt" type="button" id="locate">Use my current location</button></div><div class="field"><label for="lat">Latitude</label><input id="lat" type="number" step="any" required readonly placeholder="Choose a location above"></div><div class="field"><label for="lon">Longitude</label><input id="lon" type="number" step="any" required readonly placeholder="Choose a location above"></div><div class="map" id="map">Choose a location to preview it here.</div><div class="field"><label for="notes">Additional notes (optional)</label><textarea id="notes" placeholder="Describe where the damage is located"></textarea></div><button class="btn" id="submit" type="submit">Submit road report</button><div class="notice" id="notice" role="status"></div></form><div class="receipt" id="receipt"><strong>Report submitted successfully</strong><p class="muted">Save this reference ID to check progress later.</p><div class="ref" id="newRef"></div><button class="btn alt" type="button" id="copy">Copy reference ID</button></div></section><section class="card"><h2>Track your report</h2><p class="muted">Enter the reference ID you received when submitting your report. Only the current status will be displayed.</p><form id="trackForm"><div class="field"><label for="refInput">Reference ID</label><input id="refInput" placeholder="Paste your report reference ID" required></div><button class="btn" type="submit" id="trackBtn">Check report status</button><div class="notice" id="trackNotice" role="status"></div></form><div class="track" id="trackResult" style="display:none"><div class="muted">Report status</div><p><span class="status" id="statusText"></span></p><div class="muted" id="submittedText"></div></div></section></div><div class="footer">Road Damage Detection and Maintenance Prioritization · <a class="admin" href="/authority">Authority access</a></div></div>
-<script>const API=location.origin,$=id=>document.getElementById(id);let lastRef='';function notice(id,msg,type){const n=$(id);n.textContent=msg;n.className='notice show '+type}function setCoords(lat,lon,label){$('lat').value=Number(lat).toFixed(6);$('lon').value=Number(lon).toFixed(6);if(label)$('address').value=label;$('map').innerHTML=`<iframe title="Selected location" style="width:100%;height:100%;border:0" loading="lazy" src="https://www.openstreetmap.org/export/embed.html?bbox=${Number(lon)-.012}%2C${Number(lat)-.009}%2C${Number(lon)+.012}%2C${Number(lat)+.009}&layer=mapnik&marker=${Number(lat)}%2C${Number(lon)}"></iframe>`}async function findAddress(){const q=$('address').value.trim();if(!q){notice('notice','Enter an address or landmark first.','err');return}const b=$('find');b.disabled=true;b.textContent='Searching…';try{const r=await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q='+encodeURIComponent(q));const d=await r.json();if(!d.length)throw Error('Address not found. Add a city or nearby landmark.');setCoords(d[0].lat,d[0].lon,d[0].display_name);notice('notice','Location found. Check the map and submit.','ok')}catch(e){notice('notice',e.message,'err')}finally{b.disabled=false;b.textContent='Find address on map'}}$('find').onclick=findAddress;$('locate').onclick=()=>{if(!navigator.geolocation){notice('notice','Location is unavailable. Search an address instead.','err');return}navigator.geolocation.getCurrentPosition(async p=>{let label='';try{const r=await fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat='+p.coords.latitude+'&lon='+p.coords.longitude);if(r.ok){const d=await r.json();label=d.display_name||''}}catch{}setCoords(p.coords.latitude,p.coords.longitude,label);notice('notice','Location captured. Confirm it on the map.','ok')},()=>notice('notice','Could not access location. Search for an address instead.','err'),{enableHighAccuracy:true,timeout:12000})};$('reportForm').onsubmit=async e=>{e.preventDefault();const f=$('image').files[0];if(!f)return;if(f.size>10*1024*1024){notice('notice','Image must be 10 MB or smaller.','err');return}if(!$('lat').value||!$('lon').value){notice('notice','Choose the location on the map first.','err');return}const b=$('submit');b.disabled=true;b.textContent='Submitting report…';try{const fd=new FormData();fd.append('latitude',$('lat').value);fd.append('longitude',$('lon').value);fd.append('description',($('address').value.trim()+' — '+$('notes').value.trim()).trim());fd.append('file',f);const r=await fetch(API+'/api/reports',{method:'POST',body:fd});const d=await r.json();if(!r.ok)throw Error(d.detail||'Submission failed');lastRef=d.reference_code;$('newRef').textContent=lastRef;$('receipt').classList.add('show');$('refInput').value=lastRef;notice('notice','Your report has been submitted. Save the reference ID to track its status.','ok')}catch(e){notice('notice',e.message,'err')}finally{b.disabled=false;b.textContent='Submit road report'}};$('copy').onclick=async()=>{try{await navigator.clipboard.writeText(lastRef);notice('notice','Reference ID copied.','ok')}catch{notice('notice','Reference ID: '+lastRef,'ok')}};$('trackForm').onsubmit=async e=>{e.preventDefault();const ref=$('refInput').value.trim();const b=$('trackBtn');b.disabled=true;b.textContent='Checking…';$('trackResult').style.display='none';try{const r=await fetch(API+'/api/track/'+encodeURIComponent(ref));const d=await r.json();if(!r.ok)throw Error(d.detail||'Could not find report');$('statusText').textContent=d.status;$('submittedText').textContent='Submitted: '+(d.submitted_at?new Date(d.submitted_at).toLocaleString():'Date unavailable');$('trackResult').style.display='block';notice('trackNotice','Report found.','ok')}catch(e){notice('trackNotice',e.message,'err')}finally{b.disabled=false;b.textContent='Check report status'}};</script></body></html>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Report Road Damage</title>
+    <style>:root{font-family:Inter,system-ui,Arial;color:#182438;background:#f4f7fb}*{box-sizing:border-box}
+      body{margin:0}.wrap{max-width:900px;margin:0 auto;padding:28px 16px}
+      .top{background:#172741;color:white;padding:22px 24px;border-radius:16px;margin-bottom:18px}
+      .top h1{margin:0 0 6px;font-size:25px}.top p{margin:0;color:#c6d3e7}
+      .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+      .card{background:#fff;border:1px solid #e2e8f0;border-radius:15px;padding:22px;min-width:0}
+      .card h2{font-size:18px;margin:0 0 6px}.muted{color:#718096;font-size:13px}
+      .field{margin:15px 0}.field label{display:block;font-weight:700;font-size:13px;margin-bottom:6px}
+      .field input,.field textarea{width:100%;padding:11px;border:1px solid #d5deea;border-radius:9px;font:inherit;background:#fbfcff}
+      .field textarea{min-height:70px}.btn{width:100%;border:0;border-radius:9px;background:#3567e8;color:white;font-weight:750;font:inherit;padding:12px;cursor:pointer;margin-top:8px}
+      .btn.alt{background:#edf2ff;color:#315cc9}.btn:disabled{opacity:.6}
+      .notice{display:none;margin-top:14px;padding:13px;border-radius:9px;overflow-wrap:anywhere}
+      .notice.show{display:block}.ok{background:#e9f8f0;color:#176b4d}.err{background:#fff0f0;color:#a32e3a}
+      .map{height:190px;border-radius:10px;overflow:hidden;background:#eef3f8;display:grid;place-items:center;color:#718096;font-size:13px}
+      .receipt{display:none;margin-top:16px;border:1px solid #cdebdc;background:#f0fbf5;border-radius:12px;padding:16px}
+      .receipt.show{display:block}.ref{font-size:16px;font-weight:800;overflow-wrap:anywhere}
+      .track{margin-top:12px;border-top:1px solid #e4eaf1;padding-top:14px}
+      .status{display:inline-block;padding:6px 10px;background:#fff2d9;color:#975b00;border-radius:30px;font-weight:800;font-size:12px}
+      .footer{margin-top:18px;text-align:center;color:#718096;font-size:12px}
+      .admin{color:#3567e8;text-decoration:none}@media(max-width:700px){
+        .grid{grid-template-columns:1fr}.wrap{padding:16px 12px}.card{padding:17px}}
+</style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="top">
+        <h1>Road Damage Reporting</h1>
+        <p>Help improve road safety. Submit a photo and the location of the damaged road.</p>
+      </header>
+      <div class="grid">
+        <section class="card">
+          <h2>Submit a road report</h2>
+          <p class="muted">Upload a road photo and provide its address or current location. Your reference ID will be shown after submission.</p>
+          <form id="reportForm">
+            <div class="field">
+              <label for="image">Road photo *</label>
+              <input id="image" type="file" accept="image/jpeg,image/png,image/webp" required>
+              <p class="muted">JPG, PNG or WebP, maximum 10 MB.</p>
+            </div>
+            <div class="field">
+              <label for="address">Road address or nearby landmark *</label>
+              <input id="address" placeholder="e.g. Near MG Road Metro Station, Bengaluru" required>
+              <button class="btn alt" type="button" id="find">Find address on map</button>
+              <button class="btn alt" type="button" id="locate">Use my current location</button>
+            </div>
+            <div class="field">
+              <label for="lat">Latitude</label>
+              <input id="lat" type="number" step="any" required readonly placeholder="Choose a location above">
+            </div>
+            <div class="field">
+              <label for="lon">Longitude</label>
+              <input id="lon" type="number" step="any" required readonly placeholder="Choose a location above">
+            </div>
+            <div class="map" id="map">Choose a location to preview it here.</div>
+            <div class="field">
+              <label for="notes">Additional notes (optional)</label>
+              <textarea id="notes" placeholder="Describe where the damage is located"></textarea>
+            </div>
+            <button class="btn" id="submit" type="submit">Submit road report</button>
+            <div class="notice" id="notice" role="status"></div>
+          </form>
+          <div class="receipt" id="receipt">
+            <strong>Report submitted successfully</strong>
+            <p class="muted">Save this reference ID to check progress later.</p>
+            <div class="ref" id="newRef"></div>
+            <button class="btn alt" type="button" id="copy">Copy reference ID</button>
+          </div>
+        </section>
+        <section class="card">
+          <h2>Track your report</h2>
+          <p class="muted">Enter the reference ID you received when submitting your report. Only the current status will be displayed.</p>
+          <form id="trackForm">
+            <div class="field">
+              <label for="refInput">Reference ID</label>
+              <input id="refInput" placeholder="Paste your report reference ID" required>
+            </div>
+            <button class="btn" type="submit" id="trackBtn">Check report status</button>
+            <div class="notice" id="trackNotice" role="status"></div>
+          </form>
+          <div class="track" id="trackResult" style="display:none">
+            <div class="muted">Report status</div>
+            <p>
+              <span class="status" id="statusText"></span>
+            </p>
+            <div class="muted" id="submittedText"></div>
+          </div>
+        </section>
+      </div>
+      <div class="footer">Road Damage Detection and Maintenance Prioritization · <a class="admin" href="/authority">Authority access</a></div>
+    </div>
+<script>const API=location.origin,$=id=>document.getElementById(id);let lastRef='';function notice(id,msg,type){const n=$(id);n.textContent=msg;n.className='notice show '+type}function setCoords(lat,lon,label){$('lat').value=Number(lat).toFixed(6);$('lon').value=Number(lon).toFixed(6);if(label)$('address').value=label;$('map').innerHTML=`<iframe title="Selected location" style="width:100%;height:100%;border:0" loading="lazy" src="https://www.openstreetmap.org/export/embed.html?bbox=${Number(lon)-.012}%2C${Number(lat)-.009}%2C${Number(lon)+.012}%2C${Number(lat)+.009}&layer=mapnik&marker=${Number(lat)}%2C${Number(lon)}"></iframe>`}async function findAddress(){const q=$('address').value.trim();if(!q){notice('notice','Enter an address or landmark first.','err');return}const b=$('find');b.disabled=true;b.textContent='Searching…';try{const r=await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q='+encodeURIComponent(q));const d=await r.json();if(!d.length)throw Error('Address not found. Add a city or nearby landmark.');setCoords(d[0].lat,d[0].lon,d[0].display_name);notice('notice','Location found. Check the map and submit.','ok')}catch(e){notice('notice',e.message,'err')}finally{b.disabled=false;b.textContent='Find address on map'}}$('find').onclick=findAddress;$('locate').onclick=()=>{if(!navigator.geolocation){notice('notice','Location is unavailable. Search an address instead.','err');return}navigator.geolocation.getCurrentPosition(async p=>{let label='';try{const r=await fetch('https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat='+p.coords.latitude+'&lon='+p.coords.longitude);if(r.ok){const d=await r.json();label=d.display_name||''}}catch{}setCoords(p.coords.latitude,p.coords.longitude,label);notice('notice','Location captured. Confirm it on the map.','ok')},()=>notice('notice','Could not access location. Search for an address instead.','err'),{enableHighAccuracy:true,timeout:12000})};$('reportForm').onsubmit=async e=>{e.preventDefault();const f=$('image').files[0];if(!f)return;if(f.size>10*1024*1024){notice('notice','Image must be 10 MB or smaller.','err');return}if(!$('lat').value||!$('lon').value){notice('notice','Choose the location on the map first.','err');return}const b=$('submit');b.disabled=true;b.textContent='Submitting report…';try{const fd=new FormData();fd.append('latitude',$('lat').value);fd.append('longitude',$('lon').value);fd.append('description',($('address').value.trim()+' — '+$('notes').value.trim()).trim());fd.append('file',f);const r=await fetch(API+'/api/reports',{method:'POST',body:fd});const d=await r.json();if(!r.ok)throw Error(d.detail||'Submission failed');lastRef=d.reference_code;$('newRef').textContent=lastRef;$('receipt').classList.add('show');$('refInput').value=lastRef;notice('notice','Your report has been submitted. Save the reference ID to track its status.','ok')}catch(e){notice('notice',e.message,'err')}finally{b.disabled=false;b.textContent='Submit road report'}};$('copy').onclick=async()=>{try{await navigator.clipboard.writeText(lastRef);notice('notice','Reference ID copied.','ok')}catch{notice('notice','Reference ID: '+lastRef,'ok')}};$('trackForm').onsubmit=async e=>{e.preventDefault();const ref=$('refInput').value.trim();const b=$('trackBtn');b.disabled=true;b.textContent='Checking…';$('trackResult').style.display='none';try{const r=await fetch(API+'/api/track/'+encodeURIComponent(ref));const d=await r.json();if(!r.ok)throw Error(d.detail||'Could not find report');$('statusText').textContent=d.status;$('submittedText').textContent='Submitted: '+(d.submitted_at?new Date(d.submitted_at).toLocaleString():'Date unavailable');$('trackResult').style.display='block';notice('trackNotice','Report found.','ok')}catch(e){notice('trackNotice',e.message,'err')}finally{b.disabled=false;b.textContent='Check report status'}};
+</script>
+  </body>
+</html>
