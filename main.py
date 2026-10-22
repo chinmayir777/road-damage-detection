@@ -19,7 +19,7 @@ from report_service import save_report
 app = FastAPI(
     title="AI-Powered Road Damage Detection and Maintenance Prioritization System",
     description="YOLO detection, damage features, severity proxy, uncertainty-aware routing and TOPSIS-style ranking",
-    version="1.3.0",
+    version="1.4.0",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -143,7 +143,7 @@ def topsis_rank(report_rows, context_verified=False):
     for j in range(4):
         denom = math.sqrt(sum(row[j] ** 2 for row in criteria))
         norms.append([row[j] / denom if denom else 0.0 for row in criteria])
-    weighted = [[norms[j][i] * weights[j] for j in range(4)] for i in range(len(criteria))]  
+    weighted = [[norms[i][j] * weights[j] for j in range(4)] for i in range(len(criteria))]
     ideal_best = [max(row[j] for row in weighted) for j in range(4)]
     ideal_worst = [min(row[j] for row in weighted) for j in range(4)]
     out = {}
@@ -191,6 +191,47 @@ def dashboard():
     if not path.is_file():
         return HTMLResponse("<h2>Dashboard file not found</h2><p>Place dashboard.html beside main.py.</p>", status_code=500)
     return path.read_text(encoding="utf-8")
+
+
+@app.get("/authority", response_class=HTMLResponse)
+def authority_dashboard():
+    path = Path(__file__).resolve().parent / "authority.html"
+    if not path.is_file():
+        return HTMLResponse("<h2>Authority dashboard file not found</h2><p>Place authority.html beside main.py.</p>", status_code=500)
+    return path.read_text(encoding="utf-8")
+
+
+def require_authority_pin(x_authority_pin: str | None):
+    pin = os.environ.get("AUTHORITY_PIN")
+    if not pin:
+        raise HTTPException(status_code=503, detail="Authority access is not configured. Set AUTHORITY_PIN in Render.")
+    if not x_authority_pin or x_authority_pin != pin:
+        raise HTTPException(status_code=403, detail="Incorrect authority PIN.")
+
+
+@app.post("/api/authority/verify")
+def verify_authority(x_authority_pin: str | None = Header(default=None)):
+    require_authority_pin(x_authority_pin)
+    return {"authenticated": True, "message": "Authority access verified."}
+
+
+@app.get("/api/track/{reference_code}")
+def track_report(reference_code: str):
+    try:
+        with psycopg.connect(db_url(), connect_timeout=10) as conn:
+            row = conn.execute("""
+                SELECT reference_code, report_status, submitted_at
+                FROM road_reports WHERE reference_code::text=%s
+            """, (reference_code,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="No report found for that reference ID.")
+        return {"reference_code": str(row[0]), "status": row[1] or "Reported",
+                "submitted_at": row[2].isoformat() if row[2] else None}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print("PUBLIC TRACK ERROR:", repr(e), flush=True)
+        raise HTTPException(status_code=500, detail="Could not check report status.")
 
 
 @app.get("/api/health")
@@ -278,17 +319,12 @@ async def submit_report(
             f"[ROAD-REPORT] Upload completed in {time.perf_counter() - request_started:.2f}s",
             flush=True,
         )
+        # Public submitter receives only a receipt; internal AI findings remain authority-only.
         return {
             "message": "Report submitted successfully",
             "reference_code": str(report["reference_code"]),
             "submitted_at": report["submitted_at"],
-            "detection_count": len(detections), "detections": detections,
-            "features": features, "severity": severity,
-            "avg_confidence": avg_conf, "uncertainty_level": uncertainty,
-            "manual_verification_required": manual_review, "decision_route": route,
-            "priority": current[0], "priority_score": current[1],
-            "conventional_score": current[2], "proposed_score": current[3],
-            "context_status": "Pending authority/system verification",
+            "status": "Reported",
         }
     except HTTPException:
         raise
@@ -304,7 +340,8 @@ async def submit_report(
 
 
 @app.get("/api/reports")
-def list_reports():
+def list_reports(x_authority_pin: str | None = Header(default=None)):
+    require_authority_pin(x_authority_pin)
     try:
         with psycopg.connect(db_url(), connect_timeout=10) as conn:
             ensure_columns(conn)
