@@ -7,7 +7,6 @@ import time
 import uuid
 import urllib.parse
 import urllib.request
-
 import psycopg
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
