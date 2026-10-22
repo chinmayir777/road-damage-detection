@@ -5,6 +5,8 @@ import shutil
 import tempfile
 import time
 import uuid
+import urllib.parse
+import urllib.request
 
 import psycopg
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
@@ -16,11 +18,16 @@ from starlette.concurrency import run_in_threadpool
 from damage_detector import detect_damage
 from report_service import save_report
 
+
 app = FastAPI(
     title="AI-Powered Road Damage Detection and Maintenance Prioritization System",
-    description="YOLO detection, damage features, severity proxy, uncertainty-aware routing and TOPSIS-style ranking",
-    version="1.4.0",
+    description=(
+        "YOLO detection, severity assessment, context retrieval, "
+        "uncertainty-aware review and TOPSIS-style prioritization"
+    ),
+    version="1.5.0",
 )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,217 +36,752 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-ALLOWED_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
-MAX_FILE_SIZE = 10 * 1024 * 1024
-VALID_STATUSES = {"Reported", "Under Review", "Repair Scheduled", "In Progress", "Repaired"}
+ALLOWED_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
 
+MAX_FILE_SIZE = 10 * 1024 * 1024
+
+VALID_STATUSES = {
+    "Reported",
+    "Under Review",
+    "Repair Scheduled",
+    "In Progress",
+    "Repaired",
+}
+
+
+# --------------------------------------------------
+# DATABASE
+# --------------------------------------------------
 
 def db_url():
     value = os.environ.get("DATABASE_URL")
+
     if not value:
-        raise HTTPException(status_code=500, detail="Database configuration unavailable.")
+        raise HTTPException(
+            status_code=500,
+            detail="Database configuration unavailable.",
+        )
+
     return value
 
 
 def ensure_columns(conn):
-    # Additive migration only; existing report data is retained.
+    """
+    Add missing columns without deleting existing records.
+    This is an additive database migration.
+    """
+
     conn.execute("""
         ALTER TABLE road_reports
-        ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'Pending',
-        ADD COLUMN IF NOT EXISTS priority_score INTEGER,
-        ADD COLUMN IF NOT EXISTS severity TEXT,
-        ADD COLUMN IF NOT EXISTS avg_confidence DOUBLE PRECISION,
-        ADD COLUMN IF NOT EXISTS uncertainty_level TEXT,
-        ADD COLUMN IF NOT EXISTS manual_verification_required BOOLEAN NOT NULL DEFAULT TRUE,
-        ADD COLUMN IF NOT EXISTS decision_route TEXT NOT NULL DEFAULT 'Review',
-        ADD COLUMN IF NOT EXISTS detection_count INTEGER NOT NULL DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS detections JSONB NOT NULL DEFAULT '[]'::jsonb,
-        ADD COLUMN IF NOT EXISTS damage_size_ratio DOUBLE PRECISION,
-        ADD COLUMN IF NOT EXISTS damage_extent DOUBLE PRECISION,
-        ADD COLUMN IF NOT EXISTS damage_density DOUBLE PRECISION,
-        ADD COLUMN IF NOT EXISTS traffic_level TEXT,
-        ADD COLUMN IF NOT EXISTS road_importance TEXT,
-        ADD COLUMN IF NOT EXISTS location_type TEXT,
-        ADD COLUMN IF NOT EXISTS context_status TEXT NOT NULL DEFAULT 'Automatic lookup pending',
-        ADD COLUMN IF NOT EXISTS road_name TEXT,
-        ADD COLUMN IF NOT EXISTS road_class TEXT,
-        ADD COLUMN IF NOT EXISTS conventional_score DOUBLE PRECISION,
-        ADD COLUMN IF NOT EXISTS proposed_score DOUBLE PRECISION
+        ADD COLUMN IF NOT EXISTS priority
+            TEXT NOT NULL DEFAULT 'Pending',
+
+        ADD COLUMN IF NOT EXISTS priority_score
+            INTEGER,
+
+        ADD COLUMN IF NOT EXISTS severity
+            TEXT,
+
+        ADD COLUMN IF NOT EXISTS avg_confidence
+            DOUBLE PRECISION,
+
+        ADD COLUMN IF NOT EXISTS uncertainty_level
+            TEXT,
+
+        ADD COLUMN IF NOT EXISTS manual_verification_required
+            BOOLEAN NOT NULL DEFAULT TRUE,
+
+        ADD COLUMN IF NOT EXISTS decision_route
+            TEXT NOT NULL DEFAULT 'Review',
+
+        ADD COLUMN IF NOT EXISTS detection_count
+            INTEGER NOT NULL DEFAULT 0,
+
+        ADD COLUMN IF NOT EXISTS detections
+            JSONB NOT NULL DEFAULT '[]'::jsonb,
+
+        ADD COLUMN IF NOT EXISTS damage_size_ratio
+            DOUBLE PRECISION,
+
+        ADD COLUMN IF NOT EXISTS damage_extent
+            DOUBLE PRECISION,
+
+        ADD COLUMN IF NOT EXISTS damage_density
+            DOUBLE PRECISION,
+
+        ADD COLUMN IF NOT EXISTS traffic_level
+            TEXT,
+
+        ADD COLUMN IF NOT EXISTS road_importance
+            TEXT,
+
+        ADD COLUMN IF NOT EXISTS location_type
+            TEXT,
+
+        ADD COLUMN IF NOT EXISTS context_status
+            TEXT NOT NULL DEFAULT 'Automatic lookup pending',
+
+        ADD COLUMN IF NOT EXISTS road_name
+            TEXT,
+
+        ADD COLUMN IF NOT EXISTS road_class
+            TEXT,
+
+        ADD COLUMN IF NOT EXISTS context_source
+            TEXT,
+
+        ADD COLUMN IF NOT EXISTS context_retrieved_at
+            TIMESTAMPTZ,
+
+        ADD COLUMN IF NOT EXISTS conventional_score
+            DOUBLE PRECISION,
+
+        ADD COLUMN IF NOT EXISTS proposed_score
+            DOUBLE PRECISION
     """)
 
 
+# --------------------------------------------------
+# AUTOMATIC ROAD CONTEXT RETRIEVAL
+# --------------------------------------------------
+
+def retrieve_road_context(latitude, longitude):
+    """
+    Best-effort road-name retrieval using OpenStreetMap Nominatim.
+
+    Traffic volume, road importance and nearby facilities are not
+    inferred from the address. Missing information remains unknown.
+    """
+
+    result = {
+        "road_name": None,
+        "road_importance": None,
+        "location_type": None,
+        "traffic_level": None,
+        "context_source": None,
+        "context_status": "Context lookup incomplete",
+    }
+
+    # Cache lookups in this application process.
+    key = (
+        round(float(latitude), 4),
+        round(float(longitude), 4),
+    )
+
+    if not hasattr(retrieve_road_context, "cache"):
+        retrieve_road_context.cache = {}
+
+    if key in retrieve_road_context.cache:
+        return dict(retrieve_road_context.cache[key])
+
+    try:
+        params = urllib.parse.urlencode({
+            "format": "jsonv2",
+            "lat": latitude,
+            "lon": longitude,
+            "zoom": 18,
+            "addressdetails": 1,
+        })
+
+        url = (
+            "https://nominatim.openstreetmap.org/reverse?"
+            + params
+        )
+
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "RoadDamagePrioritizationProject/1.0 "
+                    "(educational prototype)"
+                ),
+                "Accept": "application/json",
+            },
+        )
+
+        with urllib.request.urlopen(
+            request,
+            timeout=5,
+        ) as response:
+            data = json.loads(
+                response.read().decode("utf-8")
+            )
+
+        address = data.get("address", {})
+
+        result["road_name"] = (
+            address.get("road")
+            or address.get("pedestrian")
+            or address.get("path")
+        )
+
+        result["context_source"] = "OpenStreetMap Nominatim"
+
+        result["context_status"] = (
+            "Address retrieved; road classification and traffic "
+            "may be incomplete"
+        )
+
+    except Exception as exc:
+        print(
+            "[ROAD-CONTEXT] Lookup unavailable:",
+            repr(exc),
+            flush=True,
+        )
+
+    retrieve_road_context.cache[key] = dict(result)
+
+    return result
+
+
+# --------------------------------------------------
+# DAMAGE FEATURE EXTRACTION
+# --------------------------------------------------
+
 def extract_features(detections):
-    """Image-relative bounding-box features. Full-image dimensions are not available here,
-    so size ratio is an approximation relative to the union of detected boxes, not the image."""
+    """
+    Calculate approximate bounding-box features.
+
+    Note: full original image dimensions are not available here.
+    These features are proxies, not physical measurements.
+    """
+
     if not detections:
-        return {"damage_size_ratio": 0.0, "damage_extent": 0.0, "damage_density": 0.0}
-    boxes = [d.get("bbox_xyxy") or [] for d in detections]
-    valid = [b for b in boxes if len(b) == 4]
-    if not valid:
-        return {"damage_size_ratio": 0.0, "damage_extent": 0.0, "damage_density": float(len(detections))}
-    areas = [max(0.0, float(b[2])-float(b[0])) * max(0.0, float(b[3])-float(b[1])) for b in valid]
+        return {
+            "damage_size_ratio": 0.0,
+            "damage_extent": 0.0,
+            "damage_density": 0.0,
+        }
+
+    boxes = [
+        detection.get("bbox_xyxy") or []
+        for detection in detections
+    ]
+
+    valid_boxes = [
+        box for box in boxes
+        if len(box) == 4
+    ]
+
+    if not valid_boxes:
+        return {
+            "damage_size_ratio": 0.0,
+            "damage_extent": 0.0,
+            "damage_density": float(len(detections)),
+        }
+
+    areas = [
+        max(0.0, float(box[2]) - float(box[0]))
+        * max(0.0, float(box[3]) - float(box[1]))
+        for box in valid_boxes
+    ]
+
     total_area = sum(areas)
-    min_x = min(float(b[0]) for b in valid)
-    min_y = min(float(b[1]) for b in valid)
-    max_x = max(float(b[2]) for b in valid)
-    max_y = max(float(b[3]) for b in valid)
-    union_box_area = max(1.0, (max_x-min_x) * (max_y-min_y))
+
+    min_x = min(float(box[0]) for box in valid_boxes)
+    min_y = min(float(box[1]) for box in valid_boxes)
+    max_x = max(float(box[2]) for box in valid_boxes)
+    max_y = max(float(box[3]) for box in valid_boxes)
+
+    bounding_region_area = max(
+        1.0,
+        (max_x - min_x) * (max_y - min_y),
+    )
+
     return {
-        "damage_size_ratio": round(max(areas) / max(1.0, total_area), 4),
-        "damage_extent": round(min(1.0, total_area / union_box_area), 4),
-        "damage_density": round(len(valid) / max(1.0, union_box_area / 10000.0), 4),
+        "damage_size_ratio": round(
+            max(areas) / max(1.0, total_area),
+            4,
+        ),
+
+        "damage_extent": round(
+            min(1.0, total_area / bounding_region_area),
+            4,
+        ),
+
+        "damage_density": round(
+            len(valid_boxes)
+            / max(1.0, bounding_region_area / 10000.0),
+            4,
+        ),
     }
 
 
+# --------------------------------------------------
+# SEVERITY ASSESSMENT
+# --------------------------------------------------
+
 def assess_severity(detections, features):
-    # Transparent proxy until a separately trained and evaluated severity classifier is supplied.
+    """
+    Heuristic severity estimate.
+    This is not a trained severity classifier.
+    """
+
     if not detections:
         return "Unconfirmed"
-    names = [str(d.get("damage_type", "")).lower() for d in detections]
-    confs = [max(0.0, min(1.0, float(d.get("confidence", 0) or 0))) for d in detections]
-    class_points = sum(3 if "pothole" in n else 2 if ("crack" in n or "alligator" in n) else 1 for n in names)
-    size_points = min(3.0, features["damage_density"] * 0.25)
-    score = class_points + size_points + sum(confs) / len(confs)
-    return "Severe" if score >= 7 else "Moderate" if score >= 3.5 else "Minor"
 
+    names = [
+        str(d.get("damage_type", "")).lower()
+        for d in detections
+    ]
+
+    confidences = [
+        max(
+            0.0,
+            min(
+                1.0,
+                float(d.get("confidence", 0) or 0),
+            ),
+        )
+        for d in detections
+    ]
+
+    class_points = sum(
+        3 if "pothole" in name
+        else 2 if (
+            "crack" in name or "alligator" in name
+        )
+        else 1
+        for name in names
+    )
+
+    size_points = min(
+        3.0,
+        features["damage_density"] * 0.25,
+    )
+
+    average_confidence = (
+        sum(confidences) / len(confidences)
+    )
+
+    score = (
+        class_points
+        + size_points
+        + average_confidence
+    )
+
+    if score >= 7:
+        return "Severe"
+
+    if score >= 3.5:
+        return "Moderate"
+
+    return "Minor"
+
+
+# --------------------------------------------------
+# CONFIDENCE AND UNCERTAINTY
+# --------------------------------------------------
 
 def confidence_uncertainty(detections):
-    # This is a provisional uncertainty heuristic, not statistical calibration.
+    """
+    Provisional uncertainty heuristic.
+    Confidence scores are not statistically calibrated.
+    """
+
     if not detections:
-        return None, "High", True, "Human verification"
-    values = [max(0.0, min(1.0, float(d.get("confidence", 0) or 0))) for d in detections]
-    mean = sum(values) / len(values)
-    low_fraction = sum(v < 0.40 for v in values) / len(values)
-    level = "High" if mean < 0.40 or low_fraction >= 0.5 else "Medium" if mean < 0.65 else "Low"
-    if mean >= 0.75 and low_fraction == 0:
+        return (
+            None,
+            "High",
+            True,
+            "Human verification",
+        )
+
+    values = [
+        max(
+            0.0,
+            min(
+                1.0,
+                float(d.get("confidence", 0) or 0),
+            ),
+        )
+        for d in detections
+    ]
+
+    mean_confidence = sum(values) / len(values)
+
+    low_fraction = (
+        sum(value < 0.40 for value in values)
+        / len(values)
+    )
+
+    if mean_confidence < 0.40 or low_fraction >= 0.5:
+        uncertainty = "High"
+    elif mean_confidence < 0.65:
+        uncertainty = "Medium"
+    else:
+        uncertainty = "Low"
+
+    if mean_confidence >= 0.75 and low_fraction == 0:
         route = "Automatic candidate"
-        verify = False
-    elif mean >= 0.45:
+        verification_required = False
+
+    elif mean_confidence >= 0.45:
         route = "Review"
-        verify = True
+        verification_required = True
+
     else:
         route = "Human verification"
-        verify = True
-    return round(mean, 4), level, verify, route
+        verification_required = True
+
+    return (
+        round(mean_confidence, 4),
+        uncertainty,
+        verification_required,
+        route,
+    )
 
 
-def topsis_rank(report_rows, context_verified=False):
-    """TOPSIS-style multi-criteria ranking over current reports.
-    Criteria: severity, context/risk, confidence/reliability and damage extent.
-    Context remains neutral until verified by the authority/system.
+# --------------------------------------------------
+# TOPSIS-STYLE PRIORITY RANKING
+# --------------------------------------------------
+
+def topsis_rank(report_rows):
     """
+    TOPSIS-style ranking.
+
+    Criteria:
+      1. Severity
+      2. Available context/risk information
+      3. Confidence adjusted for verification uncertainty
+      4. Approximate damage extent
+
+    Scores are prototype-relative rankings, not validated risk scores.
+    """
+
     if not report_rows:
         return {}
+
     import math
+
     criteria = []
-    for r in report_rows:
-        # Row indices: id, severity, context_points, confidence, uncertainty penalty, extent, route
+
+    for row in report_rows:
         criteria.append([
-            float(r[1] or 0),
-            float(r[2] or 0),
-            float(r[3] or 0) * (0.7 if r[4] else 1.0),
-            float(r[5] or 0),
+            float(row[1] or 0),
+            float(row[2] or 0),
+            float(row[3] or 0)
+            * (0.7 if row[4] else 1.0),
+            float(row[5] or 0),
         ])
+
     weights = [0.35, 0.30, 0.20, 0.15]
-    norms = []
-    for j in range(4):
-        denom = math.sqrt(sum(row[j] ** 2 for row in criteria))
-        norms.append([row[j] / denom if denom else 0.0 for row in criteria])
-    weighted = [[norms[i][j] * weights[j] for j in range(4)] for i in range(len(criteria))]
-    ideal_best = [max(row[j] for row in weighted) for j in range(4)]
-    ideal_worst = [min(row[j] for row in weighted) for j in range(4)]
-    out = {}
-    for i, row in enumerate(weighted):
-        d_best = math.sqrt(sum((row[j] - ideal_best[j]) ** 2 for j in range(4)))
-        d_worst = math.sqrt(sum((row[j] - ideal_worst[j]) ** 2 for j in range(4)))
-        closeness = d_worst / (d_best + d_worst) if (d_best + d_worst) else 0.0
-        out[report_rows[i][0]] = round(closeness * 100)
-    return out
+
+    normalized = []
+
+    for column in range(4):
+        denominator = math.sqrt(
+            sum(
+                row[column] ** 2
+                for row in criteria
+            )
+        )
+
+        normalized.append([
+            row[column] / denominator
+            if denominator else 0.0
+            for row in criteria
+        ])
+
+    weighted = [
+        [
+            normalized[column][index] * weights[column]
+            for column in range(4)
+        ]
+        for index in range(len(criteria))
+    ]
+
+    ideal_best = [
+        max(row[column] for row in weighted)
+        for column in range(4)
+    ]
+
+    ideal_worst = [
+        min(row[column] for row in weighted)
+        for column in range(4)
+    ]
+
+    scores = {}
+
+    for index, row in enumerate(weighted):
+        distance_best = math.sqrt(
+            sum(
+                (row[column] - ideal_best[column]) ** 2
+                for column in range(4)
+            )
+        )
+
+        distance_worst = math.sqrt(
+            sum(
+                (row[column] - ideal_worst[column]) ** 2
+                for column in range(4)
+            )
+        )
+
+        denominator = distance_best + distance_worst
+
+        closeness = (
+            distance_worst / denominator
+            if denominator else 0.0
+        )
+
+        scores[report_rows[index][0]] = round(
+            closeness * 100
+        )
+
+    return scores
 
 
 def refresh_priorities(conn):
+    """
+    Recalculate rankings for all reports that are not repaired.
+    Missing context is treated as unknown, not fabricated.
+    """
+
     rows = conn.execute("""
-        SELECT report_id,
-               CASE severity WHEN 'Minor' THEN 1 WHEN 'Moderate' THEN 2 WHEN 'Severe' THEN 3 ELSE 0 END AS severity_value,
-               CASE
-                 WHEN traffic_level IS NULL OR road_importance IS NULL OR location_type IS NULL THEN 0
-                 ELSE
-                   (CASE traffic_level WHEN 'High' THEN 3 WHEN 'Medium' THEN 2 WHEN 'Low' THEN 1 ELSE 0 END)
-                   + (CASE road_importance WHEN 'Major' THEN 3 WHEN 'Collector' THEN 2 WHEN 'Local' THEN 1 ELSE 0 END)
-                   + (CASE location_type WHEN 'School/Hospital' THEN 3 WHEN 'Junction/Transit' THEN 2 WHEN 'General' THEN 1 ELSE 0 END)
-               END AS context_points,
-               COALESCE(avg_confidence, 0), CASE WHEN manual_verification_required THEN 1 ELSE 0 END,
-               COALESCE(damage_extent, 0), decision_route
+        SELECT
+            report_id,
+
+            CASE severity
+                WHEN 'Minor' THEN 1
+                WHEN 'Moderate' THEN 2
+                WHEN 'Severe' THEN 3
+                ELSE 0
+            END AS severity_value,
+
+            CASE
+                WHEN traffic_level IS NULL
+                  OR road_importance IS NULL
+                  OR location_type IS NULL
+                THEN 0
+
+                ELSE
+                    (
+                        CASE traffic_level
+                            WHEN 'High' THEN 3
+                            WHEN 'Medium' THEN 2
+                            WHEN 'Low' THEN 1
+                            ELSE 0
+                        END
+                    )
+                    +
+                    (
+                        CASE road_importance
+                            WHEN 'Major' THEN 3
+                            WHEN 'Collector' THEN 2
+                            WHEN 'Local' THEN 1
+                            ELSE 0
+                        END
+                    )
+                    +
+                    (
+                        CASE location_type
+                            WHEN 'School/Hospital' THEN 3
+                            WHEN 'Junction/Transit' THEN 2
+                            WHEN 'General' THEN 1
+                            ELSE 0
+                        END
+                    )
+            END AS context_points,
+
+            COALESCE(avg_confidence, 0),
+
+            CASE
+                WHEN manual_verification_required THEN 1
+                ELSE 0
+            END,
+
+            COALESCE(damage_extent, 0),
+
+            decision_route
+
         FROM road_reports
         WHERE report_status <> 'Repaired'
     """).fetchall()
+
     scores = topsis_rank(rows)
+
     for row in rows:
         score = scores.get(row[0], 0)
-        priority = "High" if score >= 67 else "Medium" if score >= 34 else "Low"
-        # A low-confidence result cannot be auto-actioned even if ranked high.
-        route = row[6] or "Review"
-        if route != "Automatic candidate":
-            route = "Human verification" if route == "Human verification" else "Review"
-        conn.execute(
-            "UPDATE road_reports SET priority_score=%s, proposed_score=%s, priority=%s, decision_route=%s WHERE report_id=%s",
-            (score, score, priority, route, row[0]),
-        )
 
+        if score >= 67:
+            priority = "High"
+        elif score >= 34:
+            priority = "Medium"
+        else:
+            priority = "Low"
+
+        route = row[6] or "Review"
+
+        if route != "Automatic candidate":
+            route = (
+                "Human verification"
+                if route == "Human verification"
+                else "Review"
+            )
+
+        conn.execute("""
+            UPDATE road_reports
+            SET
+                priority_score = %s,
+                proposed_score = %s,
+                priority = %s,
+                decision_route = %s
+            WHERE report_id = %s
+        """, (
+            score,
+            score,
+            priority,
+            route,
+            row[0],
+        ))
+
+
+# --------------------------------------------------
+# HTML DASHBOARDS
+# --------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard():
     path = Path(__file__).resolve().parent / "dashboard.html"
+
     if not path.is_file():
-        return HTMLResponse("<h2>Dashboard file not found</h2><p>Place dashboard.html beside main.py.</p>", status_code=500)
+        return HTMLResponse(
+            "<h2>Dashboard file not found</h2>"
+            "<p>Place dashboard.html beside main.py.</p>",
+            status_code=500,
+        )
+
     return path.read_text(encoding="utf-8")
 
 
 @app.get("/authority", response_class=HTMLResponse)
 def authority_dashboard():
     path = Path(__file__).resolve().parent / "authority.html"
+
     if not path.is_file():
-        return HTMLResponse("<h2>Authority dashboard file not found</h2><p>Place authority.html beside main.py.</p>", status_code=500)
+        return HTMLResponse(
+            "<h2>Authority dashboard file not found</h2>"
+            "<p>Place authority.html beside main.py.</p>",
+            status_code=500,
+        )
+
     return path.read_text(encoding="utf-8")
 
 
-def require_authority_pin(x_authority_pin: str | None):
-    pin = os.environ.get("AUTHORITY_PIN")
-    if not pin:
-        raise HTTPException(status_code=503, detail="Authority access is not configured. Set AUTHORITY_PIN in Render.")
-    if not x_authority_pin or x_authority_pin != pin:
-        raise HTTPException(status_code=403, detail="Incorrect authority PIN.")
+# --------------------------------------------------
+# AUTHORITY AUTHENTICATION
+# --------------------------------------------------
+
+def require_authority_pin(
+    x_authority_pin: str | None,
+):
+    configured_pin = os.environ.get("AUTHORITY_PIN")
+
+    if not configured_pin:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Authority access is not configured. "
+                "Set AUTHORITY_PIN in Render."
+            ),
+        )
+
+    if (
+        not x_authority_pin
+        or x_authority_pin != configured_pin
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Incorrect authority PIN.",
+        )
 
 
 @app.post("/api/authority/verify")
-def verify_authority(x_authority_pin: str | None = Header(default=None)):
+def verify_authority(
+    x_authority_pin: str | None = Header(default=None),
+):
     require_authority_pin(x_authority_pin)
-    return {"authenticated": True, "message": "Authority access verified."}
 
+    return {
+        "authenticated": True,
+        "message": "Authority access verified.",
+    }
+
+
+# --------------------------------------------------
+# PUBLIC REPORT TRACKING
+# --------------------------------------------------
 
 @app.get("/api/track/{reference_code}")
 def track_report(reference_code: str):
     try:
-        with psycopg.connect(db_url(), connect_timeout=10) as conn:
+        with psycopg.connect(
+            db_url(),
+            connect_timeout=10,
+        ) as conn:
             row = conn.execute("""
-                SELECT reference_code, report_status, submitted_at
-                FROM road_reports WHERE reference_code::text=%s
+                SELECT
+                    reference_code,
+                    report_status,
+                    submitted_at
+                FROM road_reports
+                WHERE reference_code::text = %s
             """, (reference_code,)).fetchone()
+
         if not row:
-            raise HTTPException(status_code=404, detail="No report found for that reference ID.")
-        return {"reference_code": str(row[0]), "status": row[1] or "Reported",
-                "submitted_at": row[2].isoformat() if row[2] else None}
+            raise HTTPException(
+                status_code=404,
+                detail="No report found for that reference ID.",
+            )
+
+        return {
+            "reference_code": str(row[0]),
+            "status": row[1] or "Reported",
+            "submitted_at": (
+                row[2].isoformat()
+                if row[2] else None
+            ),
+        }
+
     except HTTPException:
         raise
-    except Exception as e:
-        print("PUBLIC TRACK ERROR:", repr(e), flush=True)
-        raise HTTPException(status_code=500, detail="Could not check report status.")
 
+    except Exception as exc:
+        print(
+            "PUBLIC TRACK ERROR:",
+            repr(exc),
+            flush=True,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Could not check report status.",
+        )
+
+
+# --------------------------------------------------
+# HEALTH CHECK
+# --------------------------------------------------
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "AI-Powered Road Damage Detection and Maintenance Prioritization System"}
+    return {
+        "status": "ok",
+        "service": (
+            "AI-Powered Road Damage Detection "
+            "and Maintenance Prioritization System"
+        ),
+    }
 
+
+# --------------------------------------------------
+# SUBMIT A ROAD DAMAGE REPORT
+# --------------------------------------------------
 
 @app.post("/api/reports")
 async def submit_report(
@@ -248,196 +790,426 @@ async def submit_report(
     description: str = Form(""),
     file: UploadFile = File(...),
 ):
-    if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
-        raise HTTPException(status_code=400, detail="Invalid location coordinates.")
+    if not -90 <= latitude <= 90:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid latitude.",
+        )
+
+    if not -180 <= longitude <= 180:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid longitude.",
+        )
+
     if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(status_code=415, detail="Upload a JPG, PNG, or WebP image.")
+        raise HTTPException(
+            status_code=415,
+            detail="Upload a JPG, PNG, or WebP image.",
+        )
+
     content = await file.read(MAX_FILE_SIZE + 1)
+
     if not content:
-        raise HTTPException(status_code=400, detail="The image is empty.")
+        raise HTTPException(
+            status_code=400,
+            detail="The image is empty.",
+        )
+
     if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="Image must be 10 MB or smaller.")
+        raise HTTPException(
+            status_code=413,
+            detail="Image must be 10 MB or smaller.",
+        )
 
     temp_path = None
     request_started = time.perf_counter()
-    print("[ROAD-REPORT] Upload request received", flush=True)
+
+    print(
+        "[ROAD-REPORT] Upload request received",
+        flush=True,
+    )
+
     try:
-        with tempfile.NamedTemporaryFile(suffix=ALLOWED_TYPES[file.content_type], delete=False) as temp:
+        with tempfile.NamedTemporaryFile(
+            suffix=ALLOWED_TYPES[file.content_type],
+            delete=False,
+        ) as temp:
             temp.write(content)
             temp_path = Path(temp.name)
+
+        # YOLO detection
         inference_started = time.perf_counter()
-        print("[ROAD-REPORT] Starting YOLO inference", flush=True)
-        result = await run_in_threadpool(detect_damage, temp_path)
+
         print(
-            f"[ROAD-REPORT] YOLO finished in {time.perf_counter() - inference_started:.2f}s",
+            "[ROAD-REPORT] Starting YOLO inference",
             flush=True,
         )
+
+        result = await run_in_threadpool(
+            detect_damage,
+            temp_path,
+        )
+
+        print(
+            "[ROAD-REPORT] YOLO finished in "
+            f"{time.perf_counter() - inference_started:.2f}s",
+            flush=True,
+        )
+
         detections = result["detections"]
+
+        # Feature extraction and heuristic severity
         features = extract_features(detections)
-        severity = assess_severity(detections, features)
-        avg_conf, uncertainty, manual_review, route = confidence_uncertainty(detections)
-        upload_dir = Path(tempfile.gettempdir()) / "road_damage_uploads"
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        saved = upload_dir / f"{uuid.uuid4().hex}{ALLOWED_TYPES[file.content_type]}"
-        shutil.copy2(temp_path, saved)
-        print("[ROAD-REPORT] Saving report record", flush=True)
+
+        severity = assess_severity(
+            detections,
+            features,
+        )
+
+        (
+            avg_confidence,
+            uncertainty,
+            verification_required,
+            decision_route,
+        ) = confidence_uncertainty(detections)
+
+        # Retrieve road name; other context remains unknown unless
+        # a reliable provider supplies it.
+        road_context = await run_in_threadpool(
+            retrieve_road_context,
+            latitude,
+            longitude,
+        )
+
+        upload_dir = (
+            Path(tempfile.gettempdir())
+            / "road_damage_uploads"
+        )
+
+        upload_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        saved_image = upload_dir / (
+            f"{uuid.uuid4().hex}"
+            f"{ALLOWED_TYPES[file.content_type]}"
+        )
+
+        shutil.copy2(
+            temp_path,
+            saved_image,
+        )
+
+        print(
+            "[ROAD-REPORT] Saving report record",
+            flush=True,
+        )
+
         save_started = time.perf_counter()
+
         report = await run_in_threadpool(
             lambda: save_report(
-                image_path=str(saved), latitude=latitude, longitude=longitude,
-                description=description.strip() or None, detections=detections,
+                image_path=str(saved_image),
+                latitude=latitude,
+                longitude=longitude,
+                description=description.strip() or None,
+                detections=detections,
             )
         )
+
         print(
-            f"[ROAD-REPORT] Report record saved in {time.perf_counter() - save_started:.2f}s",
+            "[ROAD-REPORT] Report record saved in "
+            f"{time.perf_counter() - save_started:.2f}s",
             flush=True,
         )
-        print("[ROAD-REPORT] Updating report and calculating priorities", flush=True)
-        with psycopg.connect(db_url(), connect_timeout=10) as conn:
+
+        print(
+            "[ROAD-REPORT] Updating report and calculating priorities",
+            flush=True,
+        )
+
+        with psycopg.connect(
+            db_url(),
+            connect_timeout=10,
+        ) as conn:
+
             ensure_columns(conn)
+
             conn.execute("""
-                UPDATE road_reports SET detections=%s::jsonb, detection_count=%s,
-                    severity=%s, avg_confidence=%s, uncertainty_level=%s,
-                    manual_verification_required=%s, decision_route=%s,
-                    damage_size_ratio=%s, damage_extent=%s, damage_density=%s,
-                    context_status='Pending authority/system verification'
-                WHERE reference_code::text=%s
+                UPDATE road_reports
+                SET
+                    detections = %s::jsonb,
+                    detection_count = %s,
+                    severity = %s,
+                    avg_confidence = %s,
+                    uncertainty_level = %s,
+                    manual_verification_required = %s,
+                    decision_route = %s,
+                    damage_size_ratio = %s,
+                    damage_extent = %s,
+                    damage_density = %s,
+                    road_name = %s,
+                    context_source = %s,
+                    context_retrieved_at =
+                        CASE
+                            WHEN %s IS NOT NULL THEN NOW()
+                            ELSE NULL
+                        END,
+                    context_status = %s
+                WHERE reference_code::text = %s
             """, (
-                json.dumps(detections), len(detections), severity, avg_conf,
-                uncertainty, manual_review, route, features["damage_size_ratio"],
-                features["damage_extent"], features["damage_density"], str(report["reference_code"]),
+                json.dumps(detections),
+                len(detections),
+                severity,
+                avg_confidence,
+                uncertainty,
+                verification_required,
+                decision_route,
+                features["damage_size_ratio"],
+                features["damage_extent"],
+                features["damage_density"],
+                road_context["road_name"],
+                road_context["context_source"],
+                road_context["context_source"],
+                road_context["context_status"],
+                str(report["reference_code"]),
             ))
-            # Baseline is damage-only; proposed ranking becomes meaningful as road context is verified.
+
+            # Conventional baseline uses detection count and confidence.
+            conventional_score = min(
+                100,
+                len(detections) * 20
+                + (avg_confidence or 0) * 40,
+            )
+
             conn.execute("""
-                UPDATE road_reports SET conventional_score = %s
-                WHERE reference_code::text=%s
-            """, (min(100, len(detections) * 20 + (avg_conf or 0) * 40), str(report["reference_code"])))
+                UPDATE road_reports
+                SET conventional_score = %s
+                WHERE reference_code::text = %s
+            """, (
+                conventional_score,
+                str(report["reference_code"]),
+            ))
+
             refresh_priorities(conn)
-            current = conn.execute("""
-                SELECT priority, priority_score, conventional_score, proposed_score
-                FROM road_reports WHERE reference_code::text=%s
-            """, (str(report["reference_code"]),)).fetchone()
+
         print(
-            f"[ROAD-REPORT] Upload completed in {time.perf_counter() - request_started:.2f}s",
+            "[ROAD-REPORT] Upload completed in "
+            f"{time.perf_counter() - request_started:.2f}s",
             flush=True,
         )
-        # Public submitter receives only a receipt; internal AI findings remain authority-only.
+
+        # Public users receive only a submission receipt.
+        # AI analysis and priority details remain authority-only.
         return {
             "message": "Report submitted successfully",
             "reference_code": str(report["reference_code"]),
             "submitted_at": report["submitted_at"],
             "status": "Reported",
         }
+
     except HTTPException:
         raise
-    except Exception as e:
+
+    except Exception as exc:
         print(
-            f"[ROAD-REPORT] SUBMISSION ERROR after {time.perf_counter() - request_started:.2f}s: {e!r}",
+            "[ROAD-REPORT] SUBMISSION ERROR after "
+            f"{time.perf_counter() - request_started:.2f}s: "
+            f"{exc!r}",
             flush=True,
         )
-        raise HTTPException(status_code=500, detail="Report submission failed. Check Render logs.") from e
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Report submission failed. "
+                "Check Render logs."
+            ),
+        ) from exc
+
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
 
 
+# --------------------------------------------------
+# AUTHORITY REPORT LIST
+# --------------------------------------------------
+
 @app.get("/api/reports")
-def list_reports(x_authority_pin: str | None = Header(default=None)):
+def list_reports(
+    x_authority_pin: str | None = Header(default=None),
+):
     require_authority_pin(x_authority_pin)
+
     try:
-        with psycopg.connect(db_url(), connect_timeout=10) as conn:
+        with psycopg.connect(
+            db_url(),
+            connect_timeout=10,
+        ) as conn:
+
             ensure_columns(conn)
+
             rows = conn.execute("""
-                SELECT report_id, reference_code, latitude, longitude, description,
-                       submitted_at, report_status, priority, detection_count, detections,
-                       priority_score, severity, avg_confidence, uncertainty_level,
-                       manual_verification_required, decision_route, traffic_level,
-                       road_importance, location_type, context_status, damage_size_ratio,
-                       damage_extent, damage_density, conventional_score, proposed_score
-                FROM road_reports ORDER BY submitted_at DESC LIMIT 100
+                SELECT
+                    report_id,
+                    reference_code,
+                    latitude,
+                    longitude,
+                    description,
+                    submitted_at,
+                    report_status,
+                    priority,
+                    detection_count,
+                    detections,
+                    priority_score,
+                    severity,
+                    avg_confidence,
+                    uncertainty_level,
+                    manual_verification_required,
+                    decision_route,
+                    traffic_level,
+                    road_importance,
+                    location_type,
+                    context_status,
+                    damage_size_ratio,
+                    damage_extent,
+                    damage_density,
+                    conventional_score,
+                    proposed_score,
+                    road_name,
+                    context_source,
+                    context_retrieved_at
+                FROM road_reports
+                ORDER BY submitted_at DESC
+                LIMIT 100
             """).fetchall()
-        return [{
-            "report_id": r[0], "reference_code": str(r[1]), "latitude": r[2], "longitude": r[3],
-            "description": r[4], "submitted_at": r[5].isoformat() if r[5] else None,
-            "report_status": r[6], "priority": r[7], "detection_count": r[8], "detections": r[9],
-            "priority_score": r[10], "severity": r[11], "avg_confidence": r[12],
-            "uncertainty_level": r[13], "manual_verification_required": r[14],
-            "decision_route": r[15], "traffic_level": r[16], "road_importance": r[17],
-            "location_type": r[18], "context_status": r[19], "damage_size_ratio": r[20],
-            "damage_extent": r[21], "damage_density": r[22], "conventional_score": r[23],
-            "proposed_score": r[24],
-        } for r in rows]
+
+        reports = []
+
+        for row in rows:
+            reports.append({
+                "report_id": row[0],
+                "reference_code": str(row[1]),
+                "latitude": row[2],
+                "longitude": row[3],
+                "description": row[4],
+                "submitted_at": (
+                    row[5].isoformat()
+                    if row[5] else None
+                ),
+                "report_status": row[6],
+                "priority": row[7],
+                "detection_count": row[8],
+                "detections": row[9],
+                "priority_score": row[10],
+                "severity": row[11],
+                "avg_confidence": row[12],
+                "uncertainty_level": row[13],
+                "manual_verification_required": row[14],
+                "decision_route": row[15],
+                "traffic_level": row[16],
+                "road_importance": row[17],
+                "location_type": row[18],
+                "context_status": row[19],
+                "damage_size_ratio": row[20],
+                "damage_extent": row[21],
+                "damage_density": row[22],
+                "conventional_score": row[23],
+                "proposed_score": row[24],
+                "road_name": row[25],
+                "context_source": row[26],
+                "context_retrieved_at": (
+                    row[27].isoformat()
+                    if row[27] else None
+                ),
+            })
+
+        return reports
+
     except HTTPException:
         raise
-    except Exception as e:
-        print("REPORT LIST ERROR:", repr(e), flush=True)
-        raise HTTPException(status_code=500, detail="Could not retrieve reports.")
 
+    except Exception as exc:
+        print(
+            "REPORT LIST ERROR:",
+            repr(exc),
+            flush=True,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Could not retrieve reports.",
+        )
+
+
+# --------------------------------------------------
+# AUTHORITY MAINTENANCE STATUS UPDATE
+# --------------------------------------------------
 
 class StatusUpdate(BaseModel):
     report_status: str
 
 
-class ContextUpdate(BaseModel):
-    traffic_level: str
-    road_importance: str
-    location_type: str
-
-
-@app.patch("/api/reports/{report_id}/context")
-def update_road_context(report_id: int, update: ContextUpdate, x_authority_pin: str | None = Header(default=None)):
-    pin = os.environ.get("AUTHORITY_PIN")
-    if not pin:
-        raise HTTPException(status_code=503, detail="Authority updates are not configured. Set AUTHORITY_PIN in Render.")
-    if not x_authority_pin or x_authority_pin != pin:
-        raise HTTPException(status_code=403, detail="Incorrect authority PIN.")
-    if update.traffic_level not in {"Low", "Medium", "High"}:
-        raise HTTPException(status_code=400, detail="Traffic must be Low, Medium, or High.")
-    if update.road_importance not in {"Local", "Collector", "Major"}:
-        raise HTTPException(status_code=400, detail="Road importance must be Local, Collector, or Major.")
-    if update.location_type not in {"General", "Junction/Transit", "School/Hospital"}:
-        raise HTTPException(status_code=400, detail="Invalid location type.")
-    try:
-        with psycopg.connect(db_url(), connect_timeout=10) as conn:
-            ensure_columns(conn)
-            found = conn.execute("""
-                UPDATE road_reports SET traffic_level=%s, road_importance=%s,
-                    location_type=%s, context_status='Verified by authority'
-                WHERE report_id=%s RETURNING report_id
-            """, (update.traffic_level, update.road_importance, update.location_type, report_id)).fetchone()
-            if not found:
-                raise HTTPException(status_code=404, detail="Report not found.")
-            refresh_priorities(conn)
-        return {"message": "Road context saved and priority ranking refreshed", "report_id": report_id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        print("CONTEXT UPDATE ERROR:", repr(e), flush=True)
-        raise HTTPException(status_code=500, detail="Could not save road context.")
-
-
 @app.patch("/api/reports/{report_id}/status")
-def update_status(report_id: int, update: StatusUpdate, x_authority_pin: str | None = Header(default=None)):
-    pin = os.environ.get("AUTHORITY_PIN")
-    if not pin:
-        raise HTTPException(status_code=503, detail="Authority updates are not configured. Set AUTHORITY_PIN in Render.")
-    if not x_authority_pin or x_authority_pin != pin:
-        raise HTTPException(status_code=403, detail="Incorrect authority PIN.")
+def update_status(
+    report_id: int,
+    update: StatusUpdate,
+    x_authority_pin: str | None = Header(default=None),
+):
+    require_authority_pin(x_authority_pin)
+
     if update.report_status not in VALID_STATUSES:
-        raise HTTPException(status_code=400, detail="Invalid report status.")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid report status.",
+        )
+
     try:
-        with psycopg.connect(db_url(), connect_timeout=10) as conn:
+        with psycopg.connect(
+            db_url(),
+            connect_timeout=10,
+        ) as conn:
+
             ensure_columns(conn)
-            found = conn.execute(
-                "UPDATE road_reports SET report_status=%s WHERE report_id=%s RETURNING report_id",
-                (update.report_status, report_id),
-            ).fetchone()
+
+            found = conn.execute("""
+                UPDATE road_reports
+                SET report_status = %s
+                WHERE report_id = %s
+                RETURNING report_id
+            """, (
+                update.report_status,
+                report_id,
+            )).fetchone()
+
             if not found:
-                raise HTTPException(status_code=404, detail="Report not found.")
+                raise HTTPException(
+                    status_code=404,
+                    detail="Report not found.",
+                )
+
             refresh_priorities(conn)
-        return {"message": "Report status updated", "report_id": report_id, "report_status": update.report_status}
+
+        return {
+            "message": "Report status updated",
+            "report_id": report_id,
+            "report_status": update.report_status,
+        }
+
     except HTTPException:
         raise
-    except Exception as e:
-        print("STATUS UPDATE ERROR:", repr(e), flush=True)
-        raise HTTPException(status_code=500, detail="Could not update report status.")
+
+    except Exception as exc:
+        print(
+            "STATUS UPDATE ERROR:",
+            repr(exc),
+            flush=True,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Could not update report status.",
+        )
