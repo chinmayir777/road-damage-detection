@@ -60,7 +60,9 @@ def ensure_columns(conn):
         ADD COLUMN IF NOT EXISTS traffic_level TEXT,
         ADD COLUMN IF NOT EXISTS road_importance TEXT,
         ADD COLUMN IF NOT EXISTS location_type TEXT,
-        ADD COLUMN IF NOT EXISTS context_status TEXT NOT NULL DEFAULT 'Pending verification',
+        ADD COLUMN IF NOT EXISTS context_status TEXT NOT NULL DEFAULT 'Automatic lookup pending',
+        ADD COLUMN IF NOT EXISTS road_name TEXT,
+        ADD COLUMN IF NOT EXISTS road_class TEXT,
         ADD COLUMN IF NOT EXISTS conventional_score DOUBLE PRECISION,
         ADD COLUMN IF NOT EXISTS proposed_score DOUBLE PRECISION
     """)
