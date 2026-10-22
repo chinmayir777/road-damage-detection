@@ -143,7 +143,7 @@ def topsis_rank(report_rows, context_verified=False):
     for j in range(4):
         denom = math.sqrt(sum(row[j] ** 2 for row in criteria))
         norms.append([row[j] / denom if denom else 0.0 for row in criteria])
-    weighted = [[norms[i][j] * weights[j] for j in range(4)] for i in range(len(criteria))]
+    weighted = [[norms[j][i] * weights[j] for j in range(4)] for i in range(len(criteria))]  
     ideal_best = [max(row[j] for row in weighted) for j in range(4)]
     ideal_worst = [min(row[j] for row in weighted) for j in range(4)]
     out = {}
