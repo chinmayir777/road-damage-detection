@@ -1,701 +1,322 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Authority Control Desk | Road Damage Detection</title>
-
+<title>Authority Control Desk | RoadWatch</title>
 <style>
-:root {
-    font-family: Inter, Arial, sans-serif;
-    color: #182438;
-    background: #f3f6fb;
-}
-* { box-sizing: border-box; }
-body { margin: 0; }
-.wrap { max-width: 1500px; margin: auto; padding: 24px 18px; }
-
-.head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 15px;
-    background: #172741;
-    color: white;
-    padding: 22px;
-    border-radius: 15px;
-    margin-bottom: 18px;
-}
-.head h1 { margin: 0 0 5px; font-size: 25px; }
-.head p { margin: 0; color: #c6d3e7; }
-
-.card {
-    background: white;
-    border: 1px solid #e2e8f0;
-    border-radius: 14px;
-    padding: 20px;
-    margin-bottom: 18px;
-}
-.login { max-width: 500px; margin: 50px auto; }
-
-.field { margin: 12px 0; }
-.field label {
-    display: block;
-    font-size: 12px;
-    font-weight: 800;
-    margin-bottom: 6px;
-}
-.field input {
-    width: 100%;
-    padding: 11px;
-    border: 1px solid #d6dfeb;
-    border-radius: 8px;
-    font: inherit;
-}
-
-.btn {
-    border: 0;
-    border-radius: 8px;
-    background: #3567e8;
-    color: white;
-    padding: 10px 14px;
-    font: inherit;
-    font-weight: 750;
-    cursor: pointer;
-}
-.btn:disabled { opacity: .6; cursor: wait; }
-.btn.alt { background: #eaf0ff; color: #315cc9; }
-
-.notice {
-    display: none;
-    margin-top: 12px;
-    padding: 11px;
-    border-radius: 8px;
-    font-size: 13px;
-    overflow-wrap: anywhere;
-}
-.notice.show { display: block; }
-.ok { background: #e9f8f0; color: #176b4d; }
-.err { background: #fff0f0; color: #a32e3a; }
-
-.metrics {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
-}
-.metric {
-    background: white;
-    border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    padding: 16px;
-}
-.metric span { display: block; color: #718096; font-size: 12px; }
-.metric strong { display: block; font-size: 28px; margin-top: 6px; }
-
-.toolbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-}
-.table-wrap { overflow: auto; margin-top: 12px; }
-table {
-    width: 100%;
-    border-collapse: collapse;
-    min-width: 1100px;
-    text-align: left;
-}
-th {
-    font-size: 10px;
-    letter-spacing: .8px;
-    text-transform: uppercase;
-    color: #718096;
-    background: #f7f9fc;
-    padding: 12px 10px;
-}
-td {
-    border-top: 1px solid #e8edf4;
-    padding: 12px 10px;
-    font-size: 12px;
-    vertical-align: top;
-}
-.pill {
-    display: inline-block;
-    padding: 5px 8px;
-    border-radius: 20px;
-    background: #fff2d9;
-    color: #975b00;
-    font-size: 11px;
-    font-weight: 800;
-    margin: 2px 0;
-}
-.pill.high { background: #ffebed; color: #b72f3d; }
-.pill.low { background: #e4f6ed; color: #14734f; }
-.muted { color: #718096; font-size: 12px; }
-.controls { min-width: 175px; }
-.controls select {
-    width: 100%;
-    padding: 8px;
-    border: 1px solid #d6dfeb;
-    border-radius: 8px;
-    margin: 3px 0 7px;
-    background: white;
-}
-.details-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-}
-.detail {
-    border: 1px solid #e5eaf2;
-    border-radius: 10px;
-    padding: 13px;
-    overflow-wrap: anywhere;
-}
-.detail strong { display: block; font-size: 17px; margin-top: 5px; }
-.empty { text-align: center; padding: 24px; color: #718096; }
-.maplink { color: #315cc9; }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.hidden { display: none !important; }
-.footer { text-align: center; color: #718096; font-size: 12px; margin: 18px; }
-
-@media(max-width:850px) {
-    .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .details-grid { grid-template-columns: 1fr 1fr; }
-    .head { align-items: flex-start; flex-direction: column; }
-}
-@media(max-width:520px) {
-    .wrap { padding: 12px; }
-    .metrics, .details-grid { grid-template-columns: 1fr; }
-    .card { padding: 14px; }
-}
+:root{font-family:Inter,Arial,sans-serif;color:#182438;background:#f3f6fb}
+*{box-sizing:border-box}
+body{margin:0}
+.wrap{max-width:1500px;margin:auto;padding:24px 18px}
+.head{display:flex;justify-content:space-between;align-items:center;gap:15px;background:#172741;color:white;padding:22px;border-radius:15px;margin-bottom:18px}
+.head h1{margin:0 0 5px;font-size:25px}
+.head p{margin:0;color:#c6d3e7}
+.card{background:white;border:1px solid #e2e8f0;border-radius:14px;padding:20px;margin-bottom:18px}
+.login{max-width:500px;margin:50px auto}
+.field{margin:12px 0}
+.field label{display:block;font-size:12px;font-weight:800;margin-bottom:6px}
+.field input{width:100%;padding:11px;border:1px solid #d6dfeb;border-radius:8px;font:inherit}
+.btn{border:0;border-radius:8px;background:#3567e8;color:white;padding:10px 14px;font:inherit;font-weight:750;cursor:pointer}
+.btn:disabled{opacity:.6;cursor:wait}
+.btn.alt{background:#eaf0ff;color:#315cc9}
+.notice{display:none;margin-top:12px;padding:11px;border-radius:8px;font-size:13px;overflow-wrap:anywhere}
+.notice.show{display:block}
+.ok{background:#e9f8f0;color:#176b4d}
+.err{background:#fff0f0;color:#a32e3a}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.metric{background:white;border:1px solid #e2e8f0;border-radius:12px;padding:16px}
+.metric span{display:block;color:#718096;font-size:12px}
+.metric strong{display:block;font-size:28px;margin-top:6px}
+.toolbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.table-wrap{overflow:auto;margin-top:12px}
+table{width:100%;border-collapse:collapse;min-width:1150px;text-align:left}
+th{font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:#718096;background:#f7f9fc;padding:12px 10px}
+td{border-top:1px solid #e8edf4;padding:12px 10px;font-size:12px;vertical-align:top}
+.pill{display:inline-block;padding:5px 8px;border-radius:20px;background:#fff2d9;color:#975b00;font-size:11px;font-weight:800;margin:2px 0}
+.pill.high{background:#ffebed;color:#b72f3d}
+.pill.low{background:#e4f6ed;color:#14734f}
+.muted{color:#718096;font-size:12px;line-height:1.5}
+.controls{min-width:175px}
+.controls select{width:100%;padding:8px;border:1px solid #d6dfeb;border-radius:8px;margin:3px 0 7px;background:white}
+.details-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.detail{border:1px solid #e5eaf2;border-radius:10px;padding:13px;overflow-wrap:anywhere}
+.detail strong{display:block;font-size:16px;margin-top:5px}
+.empty{text-align:center;padding:24px;color:#718096}
+.maplink{color:#315cc9}
+.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.hidden{display:none!important}
+.footer{text-align:center;color:#718096;font-size:12px;margin:18px}
+a{overflow-wrap:anywhere}
+@media(max-width:850px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.details-grid{grid-template-columns:1fr 1fr}.head{align-items:flex-start;flex-direction:column}}
+@media(max-width:520px){.wrap{padding:12px}.metrics,.details-grid{grid-template-columns:1fr}.card{padding:14px}}
 </style>
 </head>
-
 <body>
 <div class="wrap">
-
 <header class="head">
-    <div>
-        <h1>Authority Control Desk</h1>
-        <p>AI-powered road damage review and maintenance prioritization</p>
-    </div>
-    <div class="actions">
-        <a href="/" style="color:white;align-self:center">Public Dashboard ↗</a>
-        <button class="btn alt hidden" id="logout">Lock Dashboard</button>
-    </div>
+  <div>
+    <h1>Authority Control Desk</h1>
+    <p>AI-powered road damage review and maintenance prioritization</p>
+  </div>
+  <div class="actions">
+    <a href="/" style="color:white">Public Dashboard ↗</a>
+    <button class="btn alt hidden" id="logout">Lock Dashboard</button>
+  </div>
 </header>
 
 <section class="card login" id="loginCard">
-    <h2>Authority Sign-In</h2>
-    <p class="muted">Enter the configured authority PIN to access private reports.</p>
-
-    <form id="loginForm">
-        <div class="field">
-            <label for="pin">Authority PIN</label>
-            <input id="pin" type="password" autocomplete="current-password"
-                   required placeholder="Enter authority PIN">
-        </div>
-        <button class="btn" id="loginBtn" type="submit">
-            Unlock Dashboard
-        </button>
-        <div class="notice" id="loginNotice"></div>
-    </form>
+  <h2>Authority Sign-In</h2>
+  <p class="muted">Enter the configured authority PIN to access private reports.</p>
+  <form id="loginForm">
+    <div class="field">
+      <label for="pin">Authority PIN</label>
+      <input id="pin" type="password" autocomplete="current-password" required placeholder="Enter authority PIN">
+    </div>
+    <button class="btn" id="loginBtn" type="submit">Unlock Dashboard</button>
+    <div class="notice" id="loginNotice"></div>
+  </form>
 </section>
 
 <div id="desk" class="hidden">
+  <section class="metrics">
+    <div class="metric"><span>Total Reports</span><strong id="total">—</strong></div>
+    <div class="metric"><span>Awaiting Action</span><strong id="open">—</strong></div>
+    <div class="metric"><span>High-Priority Reports</span><strong id="high">—</strong></div>
+    <div class="metric"><span>Repaired</span><strong id="repaired">—</strong></div>
+  </section>
 
-    <section class="metrics">
-        <div class="metric">
-            <span>Total Reports</span>
-            <strong id="total">—</strong>
-        </div>
-        <div class="metric">
-            <span>Awaiting Action</span>
-            <strong id="open">—</strong>
-        </div>
-        <div class="metric">
-            <span>High-Priority Reports</span>
-            <strong id="high">—</strong>
-        </div>
-        <div class="metric">
-            <span>Repaired</span>
-            <strong id="repaired">—</strong>
-        </div>
-    </section>
+  <section class="card">
+    <div class="toolbar">
+      <div>
+        <h2 style="margin:0">Maintenance Queue</h2>
+        <p class="muted">Review AI findings, refresh missing road context, and update maintenance status.</p>
+      </div>
+      <button class="btn alt" id="refresh">Refresh Reports</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Reference</th><th>Location</th><th>Submitted</th>
+          <th>Damage / Severity</th><th>Confidence / Uncertainty</th>
+          <th>Priority</th><th>Inspection</th><th>Maintenance Status</th><th>Details</th>
+        </tr></thead>
+        <tbody id="rows"><tr><td colspan="9" class="empty">Sign in to load reports.</td></tr></tbody>
+      </table>
+    </div>
+    <div class="notice" id="deskNotice"></div>
+  </section>
 
-    <section class="card">
-        <div class="toolbar">
-            <div>
-                <h2 style="margin:0">Maintenance Queue</h2>
-                <p class="muted">
-                    Inspect flagged reports and update maintenance status.
-                </p>
-            </div>
-            <button class="btn alt" id="refresh">Refresh Reports</button>
-        </div>
-
-        <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Reference</th>
-                        <th>Location</th>
-                        <th>Submitted</th>
-                        <th>Damage / Severity</th>
-                        <th>Confidence / Uncertainty</th>
-                        <th>Priority</th>
-                        <th>Inspection</th>
-                        <th>Maintenance Status</th>
-                        <th>Details</th>
-                    </tr>
-                </thead>
-                <tbody id="rows">
-                    <tr><td colspan="9" class="empty">Sign in to load reports.</td></tr>
-                </tbody>
-            </table>
-        </div>
-        <div class="notice" id="deskNotice"></div>
-    </section>
-
-    <section class="card">
-        <h2>Report Details</h2>
-        <p class="muted">
-            AI outputs are estimates, not confirmed road-condition measurements.
-            Physically inspect flagged cases before making repair decisions.
-        </p>
-        <div id="detailBody" class="muted">
-            Choose "View Details" in a report row.
-        </div>
-    </section>
+  <section class="card">
+    <h2>Report Details</h2>
+    <p class="muted">AI scores are estimates, not confirmed road-condition measurements. Physically inspect flagged cases before making repair decisions.</p>
+    <div id="detailBody" class="muted">Choose View Details in a report row.</div>
+  </section>
 </div>
 
-<div class="footer">
-    AI-Powered Road Damage Detection and Maintenance Prioritization System
-    · Authority Workspace
-</div>
+<div class="footer">RoadWatch · Authority Workspace</div>
 </div>
 
 <script>
 const API = location.origin;
 const $ = id => document.getElementById(id);
-
 let pin = "";
 let reports = [];
 
-const STATUSES = [
-    "Reported",
-    "Under Review",
-    "Repair Scheduled",
-    "In Progress",
-    "Repaired"
-];
+const STATUSES = ["Reported","Under Review","Repair Scheduled","In Progress","Repaired"];
 
 function esc(value) {
-    return String(value ?? "—").replace(/[&<>"']/g, char => ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;"
-    })[char]);
+  return String(value ?? "—").replace(/[&<>"']/g,c=>({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  })[c]);
 }
-
-function note(id, message, type) {
-    const element = $(id);
-    element.textContent = message;
-    element.className = "notice show " + type;
+function note(id,message,type) {
+  const el=$(id);
+  el.textContent=message;
+  el.className="notice show "+type;
 }
-
 function date(value) {
-    if (!value) return "—";
-    const d = new Date(value);
-    return isNaN(d) ? "—" : d.toLocaleString();
+  if(!value)return "—";
+  const d=new Date(value);
+  return isNaN(d)?"—":d.toLocaleString();
+}
+function percent(value) {
+  if(value===null||value===undefined||value==="")return "—";
+  const n=Number(value);
+  return Number.isFinite(n)?Math.round(n*100)+"%":"—";
+}
+async function api(url,options={}) {
+  const headers=new Headers(options.headers||{});
+  headers.set("X-Authority-PIN",pin);
+  const response=await fetch(API+url,{...options,headers});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(data.detail||"Request failed ("+response.status+")");
+  return data;
 }
 
-function formatPercent(value) {
-    if (value === null || value === undefined || value === "") return "—";
-    const n = Number(value);
-    if (!Number.isFinite(n)) return "—";
-    return Math.round(n * 100) + "%";
-}
-
-function formatNumber(value, digits = 4) {
-    if (value === null || value === undefined || value === "") return "—";
-    const n = Number(value);
-    return Number.isFinite(n) ? n.toFixed(digits) : "—";
-}
-
-async function api(url, options = {}) {
-    const headers = new Headers(options.headers || {});
-    headers.set("X-Authority-PIN", pin);
-
-    const response = await fetch(API + url, {
-        ...options,
-        headers
-    });
-
-    const data = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-        throw new Error(data.detail || "Request failed (" + response.status + ")");
-    }
-
-    return data;
-}
-
-/* Authority authentication */
-$("loginForm").addEventListener("submit", async event => {
-    event.preventDefault();
-
-    pin = $("pin").value.trim();
-    const button = $("loginBtn");
-    button.disabled = true;
-
-    try {
-        await api("/api/authority/verify", { method: "POST" });
-
-        $("loginCard").classList.add("hidden");
-        $("desk").classList.remove("hidden");
-        $("logout").classList.remove("hidden");
-
-        await loadReports();
-    } catch (error) {
-        pin = "";
-        note("loginNotice", error.message, "err");
-    } finally {
-        button.disabled = false;
-    }
+$("loginForm").addEventListener("submit",async event=>{
+  event.preventDefault();
+  pin=$("pin").value.trim();
+  $("loginBtn").disabled=true;
+  try {
+    await api("/api/authority/verify",{method:"POST"});
+    $("loginCard").classList.add("hidden");
+    $("desk").classList.remove("hidden");
+    $("logout").classList.remove("hidden");
+    await loadReports();
+  } catch(error) {
+    pin="";
+    note("loginNotice",error.message,"err");
+  } finally {
+    $("loginBtn").disabled=false;
+  }
 });
 
-$("logout").addEventListener("click", () => {
-    pin = "";
-    reports = [];
-    $("pin").value = "";
-
-    $("desk").classList.add("hidden");
-    $("loginCard").classList.remove("hidden");
-    $("logout").classList.add("hidden");
-
-    $("rows").innerHTML =
-        '<tr><td colspan="9" class="empty">Sign in to load reports.</td></tr>';
-
-    $("detailBody").textContent = 'Choose "View Details" in a report row.';
-    $("loginNotice").className = "notice";
+$("logout").addEventListener("click",()=>{
+  pin="";
+  reports=[];
+  $("pin").value="";
+  $("desk").classList.add("hidden");
+  $("loginCard").classList.remove("hidden");
+  $("logout").classList.add("hidden");
+  $("rows").innerHTML='<tr><td colspan="9" class="empty">Sign in to load reports.</td></tr>';
+  $("detailBody").textContent="Choose View Details in a report row.";
+  $("loginNotice").className="notice";
 });
+$("refresh").addEventListener("click",loadReports);
 
-$("refresh").addEventListener("click", loadReports);
-
-/* Load and display reports */
 async function loadReports() {
-    const button = $("refresh");
-    button.disabled = true;
+  $("refresh").disabled=true;
+  try {
+    const data=await api("/api/reports");
+    if(!Array.isArray(data))throw new Error("Unexpected report response from server.");
+    reports=data;
+    reports.sort((a,b)=>
+      Number(Boolean(b.manual_verification_required))-Number(Boolean(a.manual_verification_required))||
+      Number(b.priority_score||0)-Number(a.priority_score||0)
+    );
+    $("total").textContent=reports.length;
+    $("open").textContent=reports.filter(r=>r.report_status!=="Repaired").length;
+    $("high").textContent=reports.filter(r=>r.priority==="High"&&r.report_status!=="Repaired").length;
+    $("repaired").textContent=reports.filter(r=>r.report_status==="Repaired").length;
+    $("rows").innerHTML=reports.length?reports.map(renderRow).join(""):'<tr><td colspan="9" class="empty">No road reports submitted.</td></tr>';
 
-    try {
-        reports = await api("/api/reports");
-
-        if (!Array.isArray(reports)) {
-            throw new Error("Unexpected report response from the server.");
-        }
-
-        reports.sort((a, b) =>
-            Number(Boolean(b.manual_verification_required)) -
-            Number(Boolean(a.manual_verification_required)) ||
-            Number(b.priority_score || 0) - Number(a.priority_score || 0)
-        );
-
-        $("total").textContent = reports.length;
-
-        $("open").textContent = reports.filter(
-            r => r.report_status !== "Repaired"
-        ).length;
-
-        $("high").textContent = reports.filter(
-            r => r.priority === "High" && r.report_status !== "Repaired"
-        ).length;
-
-        $("repaired").textContent = reports.filter(
-            r => r.report_status === "Repaired"
-        ).length;
-
-        $("rows").innerHTML = reports.length
-            ? reports.map(renderRow).join("")
-            : '<tr><td colspan="9" class="empty">No road reports submitted.</td></tr>';
-
-        document.querySelectorAll(".saveStatus").forEach(button => {
-            button.addEventListener("click", () => saveStatus(button));
-        });
-
-        document.querySelectorAll(".detailsBtn").forEach(button => {
-            button.addEventListener("click", () =>
-                showDetails(Number(button.dataset.id))
-            );
-        });
-
-        note("deskNotice", "Loaded " + reports.length + " report(s).", "ok");
-
-    } catch (error) {
-        note("deskNotice", error.message, "err");
-
-        if (/PIN|authority|configured|unauthorized|forbidden/i.test(error.message)) {
-            $("desk").classList.add("hidden");
-            $("loginCard").classList.remove("hidden");
-            $("logout").classList.add("hidden");
-            pin = "";
-        }
-    } finally {
-        button.disabled = false;
+    document.querySelectorAll(".saveStatus").forEach(b=>b.addEventListener("click",()=>saveStatus(b)));
+    document.querySelectorAll(".detailsBtn").forEach(b=>b.addEventListener("click",()=>showDetails(Number(b.dataset.id))));
+    document.querySelectorAll(".contextBtn").forEach(b=>b.addEventListener("click",()=>refreshContext(b)));
+    note("deskNotice","Loaded "+reports.length+" report(s).","ok");
+  } catch(error) {
+    note("deskNotice",error.message,"err");
+    if(/PIN|authority|configured|unauthorized|forbidden/i.test(error.message)){
+      $("desk").classList.add("hidden");
+      $("loginCard").classList.remove("hidden");
+      $("logout").classList.add("hidden");
+      pin="";
     }
+  } finally {
+    $("refresh").disabled=false;
+  }
 }
 
-function renderRow(report) {
-    const id = esc(report.report_id);
-    const lat = Number(report.latitude);
-    const lon = Number(report.longitude);
-
-    const validCoordinates =
-        Number.isFinite(lat) && Number.isFinite(lon);
-
-    const mapUrl = validCoordinates
-        ? "https://www.openstreetmap.org/?mlat=" + lat +
-          "&mlon=" + lon + "#map=17/" + lat + "/" + lon
-        : "";
-
-    const locationLink = validCoordinates
-        ? '<a class="maplink" target="_blank" rel="noopener" href="' +
-          esc(mapUrl) + '">Open Map ↗</a>'
-        : '<span class="muted">Coordinates unavailable</span>';
-
-    const confidence = report.avg_confidence == null
-        ? "—"
-        : formatPercent(report.avg_confidence) + " mean";
-
-    const priorityClass = String(report.priority || "").toLowerCase();
-
-    return `
-    <tr>
-        <td>
-            <strong>${esc(report.reference_code)}</strong><br>
-            <span class="muted">Report #${id}</span>
-        </td>
-        <td>
-            ${esc(report.road_name || report.description || "Address unavailable")}<br>
-            ${locationLink}<br>
-            <span class="muted">
-                ${validCoordinates ? lat.toFixed(5) + ", " + lon.toFixed(5) : "—"}
-            </span>
-        </td>
-        <td>${esc(date(report.submitted_at))}</td>
-        <td>
-            ${esc(report.detection_count ?? "—")} detection(s)<br>
-            <span class="pill">${esc(report.severity || "Unassessed")}</span>
-        </td>
-        <td>
-            ${esc(confidence)}<br>
-            <span class="pill">
-                ${esc(report.uncertainty_level || "Unknown")} uncertainty
-            </span>
-        </td>
-        <td>
-            <span class="pill ${esc(priorityClass)}">
-                ${esc(report.priority || "Pending")}
-            </span><br>
-            <strong>
-                ${report.priority_score == null
-                    ? "—"
-                    : esc(report.priority_score) + "/100"}
-            </strong>
-        </td>
-        <td>
-            ${report.manual_verification_required
-                ? '<span class="pill high">Inspection Required</span>'
-                : '<span class="pill low">Not Flagged</span>'}
-            <br><span class="muted">${esc(report.decision_route || "Review")}</span>
-        </td>
-        <td class="controls">
-            <select class="statusSel" data-id="${id}" aria-label="Maintenance status">
-                ${STATUSES.map(status =>
-                    `<option value="${esc(status)}"
-                    ${status === report.report_status ? "selected" : ""}>
-                    ${esc(status)}</option>`
-                ).join("")}
-            </select>
-            <button class="btn saveStatus" data-id="${id}">Save Status</button>
-        </td>
-        <td>
-            <button class="btn alt detailsBtn" data-id="${id}">
-                View Details
-            </button>
-        </td>
-    </tr>`;
+function renderRow(r) {
+  const id=Number(r.report_id);
+  const lat=Number(r.latitude),lon=Number(r.longitude);
+  const coords=Number.isFinite(lat)&&Number.isFinite(lon);
+  const map=coords
+    ?`<a class="maplink" target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=17/${lat}/${lon}">Open Map ↗</a>`
+    :"<span class='muted'>Coordinates unavailable</span>";
+  const priorityClass=String(r.priority||"").toLowerCase();
+  return `<tr>
+    <td><strong>${esc(r.reference_code)}</strong><br><span class="muted">Report #${esc(id)}</span></td>
+    <td>${esc(r.road_name||r.description||"Address unavailable")}<br>${map}<br><span class="muted">${coords?lat.toFixed(5)+", "+lon.toFixed(5):"—"}</span></td>
+    <td>${esc(date(r.submitted_at))}</td>
+    <td>${esc(r.detection_count??"—")} detection(s)<br><span class="pill">${esc(r.severity||"Unassessed")}</span></td>
+    <td>${esc(percent(r.avg_confidence))} mean<br><span class="pill">${esc(r.uncertainty_level||"Unknown")} uncertainty</span></td>
+    <td><span class="pill ${esc(priorityClass)}">${esc(r.priority||"Pending")}</span><br><strong>${r.priority_score==null?"—":esc(r.priority_score)+"/100"}</strong></td>
+    <td>${r.manual_verification_required?'<span class="pill high">Inspection Required</span>':'<span class="pill low">Not Flagged</span>'}<br><span class="muted">${esc(r.decision_route||"Review")}</span></td>
+    <td class="controls">
+      <select class="statusSel" data-id="${id}" aria-label="Maintenance status">
+        ${STATUSES.map(s=>`<option value="${esc(s)}" ${s===r.report_status?"selected":""}>${esc(s)}</option>`).join("")}
+      </select>
+      <button class="btn saveStatus" data-id="${id}">Save Status</button>
+    </td>
+    <td>
+      <button class="btn alt detailsBtn" data-id="${id}">View Details</button>
+      <button class="btn alt contextBtn" data-id="${id}" style="margin-top:6px">Refresh Road Context</button>
+    </td>
+  </tr>`;
 }
 
-/* Update maintenance status */
 async function saveStatus(button) {
-    const id = Number(button.dataset.id);
-    const select = document.querySelector(
-        '.statusSel[data-id="' + id + '"]'
-    );
-
-    if (!select) return;
-
-    button.disabled = true;
-
-    try {
-        await api("/api/reports/" + id + "/status", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ report_status: select.value })
-        });
-
-        await loadReports();
-        note("deskNotice", "Maintenance status updated successfully.", "ok");
-
-    } catch (error) {
-        note("deskNotice", error.message, "err");
-    } finally {
-        button.disabled = false;
-    }
+  const id=Number(button.dataset.id);
+  const select=document.querySelector('.statusSel[data-id="'+id+'"]');
+  if(!select)return;
+  button.disabled=true;
+  try {
+    await api("/api/reports/"+id+"/status",{
+      method:"PATCH",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({report_status:select.value})
+    });
+    await loadReports();
+    note("deskNotice","Maintenance status updated.","ok");
+  } catch(error) {
+    note("deskNotice",error.message,"err");
+  } finally {
+    button.disabled=false;
+  }
 }
 
-/* Show complete report details */
+async function refreshContext(button) {
+  const id=Number(button.dataset.id);
+  button.disabled=true;
+  button.textContent="Refreshing...";
+  try {
+    const data=await api("/api/reports/"+id+"/refresh-context",{method:"POST"});
+    await loadReports();
+    const message=data.context_status||"Context lookup completed.";
+    note("deskNotice",message,"ok");
+    const refreshed=reports.find(r=>Number(r.report_id)===id);
+    if(refreshed)showDetails(id);
+  } catch(error) {
+    note("deskNotice",error.message+" Check that the refresh-context endpoint is deployed.","err");
+  } finally {
+    button.disabled=false;
+    button.textContent="Refresh Road Context";
+  }
+}
+
 function showDetails(id) {
-    const report = reports.find(
-        item => Number(item.report_id) === id
-    );
+  const r=reports.find(item=>Number(item.report_id)===id);
+  if(!r)return;
+  const detections=Array.isArray(r.detections)?r.detections:[];
+  const lat=Number(r.latitude),lon=Number(r.longitude);
+  const coords=Number.isFinite(lat)&&Number.isFinite(lon);
+  const map=coords
+    ?`<a class="maplink" target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=18/${lat}/${lon}">Open Location Map ↗</a>`
+    :"Coordinates unavailable";
 
-    if (!report) return;
-
-    const detections = Array.isArray(report.detections)
-        ? report.detections
-        : [];
-
-    const lat = Number(report.latitude);
-    const lon = Number(report.longitude);
-
-    const validCoordinates =
-        Number.isFinite(lat) && Number.isFinite(lon);
-
-    const mapUrl = validCoordinates
-        ? "https://www.openstreetmap.org/?mlat=" + lat +
-          "&mlon=" + lon + "#map=18/" + lat + "/" + lon
-        : "";
-
-    const mapLink = validCoordinates
-        ? `<a class="maplink" target="_blank" rel="noopener"
-             href="${esc(mapUrl)}">Open Location Map ↗</a>`
-        : '<span class="muted">Location map unavailable</span>';
-
-    $("detailBody").innerHTML = `
-    <div class="details-grid">
-
-        <div class="detail">
-            Reference ID
-            <strong style="font-size:13px">${esc(report.reference_code)}</strong>
-        </div>
-
-        <div class="detail">
-            Suggested Priority
-            <strong>${esc(report.priority || "Pending")} ·
-            ${report.priority_score == null
-                ? "—"
-                : esc(report.priority_score) + "/100"}</strong>
-        </div>
-
-        <div class="detail">
-            Severity Estimate
-            <strong>${esc(report.severity || "Unassessed")}</strong>
-        </div>
-
-        <div class="detail">
-            Average Detection Confidence
-            <strong>${esc(formatPercent(report.avg_confidence))}</strong>
-        </div>
-
-        <div class="detail">
-            Uncertainty and Decision Route
-            <strong>
-                ${esc(report.uncertainty_level || "Unknown")} /
-                ${esc(report.decision_route || "Review")}
-            </strong>
-            <p class="muted">
-                Physical inspection:
-                ${report.manual_verification_required ? "Required" : "Not flagged by current heuristic"}
-            </p>
-        </div>
-
-        <div class="detail">
-            Approximate Damage Features
-            <p>
-                Size ratio: ${esc(report.damage_size_ratio)}<br>
-                Extent: ${esc(report.damage_extent)}<br>
-                Density: ${esc(report.damage_density)}
-            </p>
-        </div>
-
-        <div class="detail">
-            Retrieved Road Context
-            <p>
-                Road name: ${esc(report.road_name || "Unavailable")}<br>
-                Road class: ${esc(report.road_class || "Unavailable")}<br>
-                Road importance: ${esc(report.road_importance || "Unavailable")}<br>
-                Traffic: ${esc(report.traffic_level || "Unavailable")}<br>
-                Nearby location type: ${esc(report.location_type || "Unavailable")}<br>
-                Source: ${esc(report.context_source || "No source returned")}<br>
-                Context status: ${esc(report.context_status || "Not retrieved")}
-            </p>
-            <p class="muted">
-                Missing traffic, road classification, or other context is
-                left unknown rather than guessed. A road-name lookup does
-                not establish traffic volume or road importance.
-            </p>
-        </div>
-
-        <div class="detail">
-            Score Comparison
-            <p>
-                Conventional baseline: ${esc(report.conventional_score)}<br>
-                Proposed score: ${esc(report.proposed_score)}<br>
-                Current priority score: ${esc(report.priority_score)}
-            </p>
-        </div>
-
-        <div class="detail">
-            Submission and Maintenance
-            <p>
-                Submitted: ${esc(date(report.submitted_at))}<br>
-                Status: ${esc(report.report_status || "Reported")}
-            </p>
-            ${mapLink}
-        </div>
-
+  $("detailBody").innerHTML=`
+  <div class="details-grid">
+    <div class="detail">Reference ID<strong>${esc(r.reference_code)}</strong></div>
+    <div class="detail">Suggested Priority<strong>${esc(r.priority||"Pending")} · ${r.priority_score==null?"—":esc(r.priority_score)+"/100"}</strong></div>
+    <div class="detail">Severity Estimate<strong>${esc(r.severity||"Unassessed")}</strong></div>
+    <div class="detail">Average Confidence<strong>${esc(percent(r.avg_confidence))}</strong></div>
+    <div class="detail">Uncertainty / Route<strong>${esc(r.uncertainty_level||"Unknown")} / ${esc(r.decision_route||"Review")}</strong><p class="muted">Physical inspection: ${r.manual_verification_required?"Required":"Not flagged by current heuristic"}</p></div>
+    <div class="detail">Damage Features<strong>Approximate</strong><p>Size ratio: ${esc(r.damage_size_ratio)}<br>Extent: ${esc(r.damage_extent)}<br>Density: ${esc(r.damage_density)}</p></div>
+    <div class="detail">Road Context<strong>${esc(r.road_name||"Road name unavailable")}</strong>
+      <p>Road class: ${esc(r.road_class)}<br>Road importance: ${esc(r.road_importance)}<br>Traffic: ${esc(r.traffic_level)}<br>Nearby location type: ${esc(r.location_type)}</p>
+      <p>Source: ${esc(r.context_source)}<br>Retrieved: ${esc(date(r.context_retrieved_at))}<br>Status: ${esc(r.context_status)}</p>
+      <p class="muted">Missing context remains unknown. A road-name lookup does not establish traffic volume.</p>
     </div>
-
-    <h3>Detected Objects (${detections.length})</h3>
-
-    ${detections.length
-        ? "<ul>" + detections.map((d, index) => `
-            <li>
-                <strong>${esc(d.damage_type || "Damage")} #${index + 1}</strong>
-                — Confidence: ${esc(formatPercent(d.confidence))};
-                Bounding box: ${esc(JSON.stringify(d.bbox_xyxy || []))}
-            </li>
-        `).join("") + "</ul>"
-        : '<p class="muted">No detections recorded.</p>'
-    }
-
-    <p class="muted">
-        Severity, confidence, uncertainty, and priority are prototype
-        outputs and should be validated against real inspection results.
-        A high score is not a guarantee of actual road risk.
-    </p>
-    `;
-
-    $("detailBody").scrollIntoView({
-        behavior: "smooth",
-        block: "start"
-    });
+    <div class="detail">Score Comparison<strong>Prototype scores</strong><p>Conventional: ${esc(r.conventional_score)}<br>Proposed: ${esc(r.proposed_score)}<br>Priority: ${esc(r.priority_score)}</p></div>
+    <div class="detail">Submission / Status<strong>${esc(r.report_status||"Reported")}</strong><p>${esc(date(r.submitted_at))}</p>${map}</div>
+  </div>
+  <h3>Detected Objects (${detections.length})</h3>
+  ${detections.length?'<ul>'+detections.map((d,i)=>`<li><strong>${esc(d.damage_type||"Damage")} #${i+1}</strong> — Confidence ${esc(percent(d.confidence))}; Bounding box: ${esc(JSON.stringify(d.bbox_xyxy||[]))}</li>`).join("")+'</ul>':'<p class="muted">No detections recorded.</p>'}
+  <p class="muted">AI scores are prototype estimates and require validation against labelled images and real inspection outcomes.</p>`;
+  $("detailBody").scrollIntoView({behavior:"smooth",block:"start"});
 }
 </script>
 </body>
