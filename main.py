@@ -1005,8 +1005,8 @@ async def submit_report(
                     traffic_level = %s,
                     context_source = %s,
                     context_retrieved_at =
-                        CASE WHEN %s IS NOT NULL THEN NOW()
-                             ELSE NULL END,
+                    CASE WHEN %s::text IS NOT NULL THEN NOW()
+                    ELSE NULL END,
                     context_status = %s
                 WHERE reference_code::text = %s
             """, (
