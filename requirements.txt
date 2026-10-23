@@ -1,6 +1,9 @@
 fastapi
 uvicorn[standard]
 python-multipart
-ultralytics
 psycopg[binary]
 python-dotenv
+onnxruntime
+numpy
+opencv-python-headless
+
