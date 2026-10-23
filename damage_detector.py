@@ -1,122 +1,145 @@
-from pathlib import Path
+
 import os
+from pathlib import Path
 
-os.environ.setdefault("OMP_NUM_THREADS", "1")
-os.environ.setdefault("MKL_NUM_THREADS", "1")
+import cv2
+import numpy as np
+import onnxruntime as ort
 
-from ultralytics import YOLO
+MODEL_PATH = Path(__file__).resolve().parent / "best.onnx"
+CONFIDENCE_THRESHOLD = 0.40
+IOU_THRESHOLD = 0.45
+INPUT_SIZE = 320
 
-try:
-    import torch
-    torch.set_num_threads(1)
-except Exception:
-    pass
+CLASS_NAMES = {
+    0: "D00_Longitudinal_crack",
+    1: "D10_Transverse_crack",
+    2: "D20_Alligator_crack",
+    3: "D40_Pothole",
+}
 
-_model = None
-
-
-def find_model():
-    current = Path(__file__).resolve().parent
-
-    for folder in (current, *current.parents):
-        candidate = folder / "best.pt"
-        if candidate.is_file():
-            return candidate
-
-    raise FileNotFoundError(
-        f"best.pt not found. Searched from {current} upwards."
-    )
-
-
-MODEL_PATH = find_model()
+_session = None
 
 
 def get_model():
-    global _model
+    global _session
 
-    if _model is None:
-        _model = YOLO(str(MODEL_PATH))
+    if _session is None:
+        if not MODEL_PATH.exists():
+            raise FileNotFoundError(
+                f"ONNX model not found: {MODEL_PATH}"
+            )
 
-    return _model
+        options = ort.SessionOptions()
+        options.intra_op_num_threads = 1
+        options.inter_op_num_threads = 1
+        options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
 
-
-def intersection_over_smaller(a, b):
-    x1 = max(a[0], b[0])
-    y1 = max(a[1], b[1])
-    x2 = min(a[2], b[2])
-    y2 = min(a[3], b[3])
-
-    intersection = max(0.0, x2 - x1) * max(0.0, y2 - y1)
-
-    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
-    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
-
-    return intersection / max(1.0, min(area_a, area_b))
-
-
-def detect_damage(image_path, confidence_threshold=0.40):
-    image_path = Path(image_path)
-
-    if not image_path.is_file():
-        raise FileNotFoundError(f"Image not found: {image_path}")
-
-    if not 0 <= confidence_threshold <= 1:
-        raise ValueError(
-            "Confidence threshold must be between 0 and 1."
+        _session = ort.InferenceSession(
+            str(MODEL_PATH),
+            sess_options=options,
+            providers=["CPUExecutionProvider"],
         )
 
-    model = get_model()
+    return _session
 
-    results = model.predict(
-        source=str(image_path),
-        conf=confidence_threshold,
-        iou=0.45,
-        imgsz=640,
-        max_det=50,
-        device="cpu",
-        verbose=False,
+
+def detect_damage(image_path):
+    session = get_model()
+
+    image = cv2.imread(str(image_path))
+    if image is None:
+        raise ValueError("Unable to read the uploaded image.")
+
+    original_h, original_w = image.shape[:2]
+
+    scale = min(
+        INPUT_SIZE / original_w,
+        INPUT_SIZE / original_h,
+    )
+    new_w = max(1, int(round(original_w * scale)))
+    new_h = max(1, int(round(original_h * scale)))
+
+    resized = cv2.resize(image, (new_w, new_h))
+
+    pad_w = INPUT_SIZE - new_w
+    pad_h = INPUT_SIZE - new_h
+    left = pad_w // 2
+    top = pad_h // 2
+
+    canvas = np.full(
+        (INPUT_SIZE, INPUT_SIZE, 3), 114, dtype=np.uint8
+    )
+    canvas[top:top + new_h, left:left + new_w] = resized
+
+    rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+    tensor = rgb.astype(np.float32) / 255.0
+    tensor = np.transpose(tensor, (2, 0, 1))[None, ...]
+
+    output = session.run(
+        None,
+        {session.get_inputs()[0].name: tensor},
+    )[0]
+
+    predictions = output[0].T
+
+    boxes = []
+    scores = []
+    class_ids = []
+
+    for row in predictions:
+        cx, cy, w, h = row[:4]
+        class_scores = row[4:8]
+
+        class_id = int(np.argmax(class_scores))
+        confidence = float(class_scores[class_id])
+
+        if confidence < CONFIDENCE_THRESHOLD:
+            continue
+
+        x1 = (cx - w / 2 - left) / scale
+        y1 = (cy - h / 2 - top) / scale
+        x2 = (cx + w / 2 - left) / scale
+        y2 = (cy + h / 2 - top) / scale
+
+        x1 = int(np.clip(x1, 0, original_w - 1))
+        y1 = int(np.clip(y1, 0, original_h - 1))
+        x2 = int(np.clip(x2, 0, original_w - 1))
+        y2 = int(np.clip(y2, 0, original_h - 1))
+
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        boxes.append([x1, y1, x2 - x1, y2 - y1])
+        scores.append(confidence)
+        class_ids.append(class_id)
+
+    kept = cv2.dnn.NMSBoxes(
+        boxes,
+        scores,
+        CONFIDENCE_THRESHOLD,
+        IOU_THRESHOLD,
     )
 
-    raw = []
-
-    for result in results:
-        for box in result.boxes:
-            class_id = int(box.cls.item())
-
-            raw.append({
-                "class_id": class_id,
-                "damage_type": model.names[class_id],
-                "confidence": round(float(box.conf.item()), 4),
-                "bbox_xyxy": [
-                    round(float(v), 2)
-                    for v in box.xyxy[0].tolist()
-                ],
-            })
-
-    # Suppress highly overlapping detections of the same class.
-    # Validate this heuristic against labelled images before relying on it.
-    raw.sort(
-        key=lambda item: item["confidence"],
-        reverse=True,
+    kept = (
+        np.array(kept).flatten().tolist()
+        if len(kept) > 0 else []
     )
 
-    kept = []
+    detections = []
 
-    for item in raw:
-        duplicate = any(
-            item["class_id"] == prior["class_id"]
-            and intersection_over_smaller(
-                item["bbox_xyxy"],
-                prior["bbox_xyxy"],
-            ) >= 0.80
-            for prior in kept
-        )
+    for i in kept[:50]:
+        x, y, w, h = boxes[i]
 
-        if not duplicate:
-            kept.append(item)
+        detections.append({
+            "class_id": class_ids[i],
+            "damage_type": CLASS_NAMES[class_ids[i]],
+            "confidence": round(scores[i], 4),
+            "bbox_xyxy": [x, y, x + w, y + h],
+        })
 
     return {
-        "image": image_path.name,
-        "detection_count": len(kept),
-        "detections": kept,
+        "image": Path(image_path).name,
+        "detection_count": len(detections),
+        "detections": detections,
     }
