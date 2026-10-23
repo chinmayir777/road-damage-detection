@@ -148,91 +148,134 @@ def ensure_columns(conn):
 # AUTOMATIC ROAD CONTEXT RETRIEVAL
 # --------------------------------------------------
 
+def _nominatim_request(params):
+    """Call Nominatim with a descriptive User-Agent."""
+    url = "https://nominatim.openstreetmap.org/" + params.pop("_endpoint") + "?" + urllib.parse.urlencode(params)
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "RoadDamagePrioritizationProject/1.0 (educational prototype)",
+            "Accept": "application/json",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=12) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def geocode_address(address):
+    """Convert a user-entered address/landmark into coordinates."""
+    query = (address or "").strip()
+    if len(query) < 3:
+        raise HTTPException(status_code=400, detail="Enter a more complete address or landmark.")
+
+    if not hasattr(geocode_address, "cache"):
+        geocode_address.cache = {}
+    key = query.casefold()
+    if key in geocode_address.cache:
+        return dict(geocode_address.cache[key])
+
+    try:
+        results = _nominatim_request({
+            "_endpoint": "search",
+            "q": query,
+            "format": "jsonv2",
+            "limit": 1,
+            "addressdetails": 1,
+            "extratags": 1,
+        })
+        if not results:
+            raise HTTPException(status_code=404, detail="Address not found. Try adding the area, city, or a nearby landmark.")
+
+        item = results[0]
+        result = {
+            "latitude": float(item["lat"]),
+            "longitude": float(item["lon"]),
+            "display_name": item.get("display_name") or query,
+            "source": "OpenStreetMap Nominatim",
+        }
+        geocode_address.cache[key] = dict(result)
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print("[ROAD-GEOCODE] Lookup failed:", repr(exc), flush=True)
+        raise HTTPException(status_code=502, detail="Address lookup is temporarily unavailable. Use current GPS or try again.") from exc
+
+
 def retrieve_road_context(latitude, longitude):
-    """
-    Best-effort road-name retrieval using OpenStreetMap Nominatim.
-
-    Traffic volume, road importance and nearby facilities are not
-    inferred from the address. Missing information remains unknown.
-    """
-
+    """Retrieve mapped road/address attributes; never fabricate traffic volume."""
     result = {
         "road_name": None,
+        "road_class": None,
         "road_importance": None,
         "location_type": None,
         "traffic_level": None,
         "context_source": None,
-        "context_status": "Context lookup incomplete",
+        "context_status": "Context lookup failed; retry required",
     }
 
-    # Cache lookups in this application process.
-    key = (
-        round(float(latitude), 4),
-        round(float(longitude), 4),
-    )
-
+    key = (round(float(latitude), 5), round(float(longitude), 5))
     if not hasattr(retrieve_road_context, "cache"):
         retrieve_road_context.cache = {}
-
     if key in retrieve_road_context.cache:
         return dict(retrieve_road_context.cache[key])
 
     try:
-        params = urllib.parse.urlencode({
+        data = _nominatim_request({
+            "_endpoint": "reverse",
             "format": "jsonv2",
-            "lat": latitude,
-            "lon": longitude,
+            "lat": float(latitude),
+            "lon": float(longitude),
             "zoom": 18,
             "addressdetails": 1,
+            "extratags": 1,
         })
-
-        url = (
-            "https://nominatim.openstreetmap.org/reverse?"
-            + params
-        )
-
-        request = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": (
-                    "RoadDamagePrioritizationProject/1.0 "
-                    "(educational prototype)"
-                ),
-                "Accept": "application/json",
-            },
-        )
-
-        with urllib.request.urlopen(
-            request,
-            timeout=5,
-        ) as response:
-            data = json.loads(
-                response.read().decode("utf-8")
-            )
-
-        address = data.get("address", {})
+        address = data.get("address") or {}
+        tags = data.get("extratags") or {}
 
         result["road_name"] = (
-            address.get("road")
-            or address.get("pedestrian")
-            or address.get("path")
+            address.get("road") or address.get("pedestrian")
+            or address.get("residential") or address.get("path")
+            or address.get("footway") or address.get("cycleway")
         )
+
+        # Reverse results may expose highway as an extra tag or result type.
+        road_class = tags.get("highway")
+        if not road_class and data.get("category") == "highway":
+            road_class = data.get("type")
+        result["road_class"] = road_class
+
+        # These are broad map-class proxies, not measured risk or traffic.
+        if road_class in {"motorway", "trunk", "primary"}:
+            result["road_importance"] = "Major"
+        elif road_class in {"secondary", "tertiary"}:
+            result["road_importance"] = "Collector"
+        elif road_class in {"residential", "living_street", "service", "unclassified"}:
+            result["road_importance"] = "Local"
+
+        # Use an explicit mapped amenity if present; don't infer proximity.
+        amenity = tags.get("amenity") or address.get("amenity")
+        if amenity in {"school", "hospital", "clinic"}:
+            result["location_type"] = "School/Hospital"
+        elif amenity in {"bus_station", "bus_stop", "parking"}:
+            result["location_type"] = "Junction/Transit"
 
         result["context_source"] = "OpenStreetMap Nominatim"
-
         result["context_status"] = (
-            "Address retrieved; road classification and traffic "
-            "may be incomplete"
+            "Road details retrieved; traffic data unavailable"
+            if result["road_name"] or result["road_class"]
+            else "Map provider returned no road details for these coordinates"
         )
+        retrieve_road_context.cache[key] = dict(result)
 
+        print("[ROAD-CONTEXT] " + json.dumps({
+            "coordinates": key,
+            "road_name": result["road_name"],
+            "road_class": result["road_class"],
+            "status": result["context_status"],
+        }), flush=True)
     except Exception as exc:
-        print(
-            "[ROAD-CONTEXT] Lookup unavailable:",
-            repr(exc),
-            flush=True,
-        )
-
-    retrieve_road_context.cache[key] = dict(result)
+        print("[ROAD-CONTEXT] Lookup failed:", repr(exc), flush=True)
 
     return result
 
@@ -712,6 +755,12 @@ def verify_authority(
     }
 
 
+@app.get("/api/geocode")
+async def geocode_endpoint(address: str):
+    """Public address-to-coordinate lookup for the reporting form."""
+    return await run_in_threadpool(geocode_address, address)
+
+
 # --------------------------------------------------
 # PUBLIC REPORT TRACKING
 # --------------------------------------------------
@@ -950,12 +999,14 @@ async def submit_report(
                     damage_extent = %s,
                     damage_density = %s,
                     road_name = %s,
+                    road_class = %s,
+                    road_importance = %s,
+                    location_type = %s,
+                    traffic_level = %s,
                     context_source = %s,
                     context_retrieved_at =
-                        CASE
-                            WHEN %s IS NOT NULL THEN NOW()
-                            ELSE NULL
-                        END,
+                        CASE WHEN %s IS NOT NULL THEN NOW()
+                             ELSE NULL END,
                     context_status = %s
                 WHERE reference_code::text = %s
             """, (
@@ -970,6 +1021,10 @@ async def submit_report(
                 features["damage_extent"],
                 features["damage_density"],
                 road_context["road_name"],
+                road_context.get("road_class"),
+                road_context.get("road_importance"),
+                road_context.get("location_type"),
+                road_context.get("traffic_level"),
                 road_context["context_source"],
                 road_context["context_source"],
                 road_context["context_status"],
@@ -1079,6 +1134,7 @@ def list_reports(
                     conventional_score,
                     proposed_score,
                     road_name,
+                    road_class,
                     context_source,
                     context_retrieved_at
                 FROM road_reports
@@ -1119,10 +1175,11 @@ def list_reports(
                 "conventional_score": row[23],
                 "proposed_score": row[24],
                 "road_name": row[25],
-                "context_source": row[26],
+                "road_class": row[26],
+                "context_source": row[27],
                 "context_retrieved_at": (
-                    row[27].isoformat()
-                    if row[27] else None
+                    row[28].isoformat()
+                    if row[28] else None
                 ),
             })
 
@@ -1142,6 +1199,61 @@ def list_reports(
             status_code=500,
             detail="Could not retrieve reports.",
         )
+
+
+# --------------------------------------------------
+# AUTHORITY ROAD-CONTEXT REFRESH FOR EXISTING REPORTS
+# --------------------------------------------------
+
+@app.post("/api/reports/{report_id}/refresh-context")
+def refresh_report_context(
+    report_id: int,
+    x_authority_pin: str | None = Header(default=None),
+):
+    require_authority_pin(x_authority_pin)
+    try:
+        with psycopg.connect(db_url(), connect_timeout=10) as conn:
+            ensure_columns(conn)
+            row = conn.execute(
+                "SELECT latitude, longitude FROM road_reports WHERE report_id = %s",
+                (report_id,),
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Report not found.")
+
+            latitude, longitude = row
+            key = (round(float(latitude), 5), round(float(longitude), 5))
+            getattr(retrieve_road_context, "cache", {}).pop(key, None)
+            context = retrieve_road_context(latitude, longitude)
+
+            conn.execute("""
+                UPDATE road_reports
+                SET road_name = %s,
+                    road_class = %s,
+                    road_importance = COALESCE(%s, road_importance),
+                    location_type = COALESCE(%s, location_type),
+                    traffic_level = COALESCE(%s, traffic_level),
+                    context_source = %s,
+                    context_retrieved_at =
+                        CASE WHEN %s IS NOT NULL THEN NOW()
+                             ELSE context_retrieved_at END,
+                    context_status = %s
+                WHERE report_id = %s
+            """, (
+                context["road_name"], context.get("road_class"),
+                context.get("road_importance"), context.get("location_type"),
+                context.get("traffic_level"), context.get("context_source"),
+                context.get("context_source"), context.get("context_status"),
+                report_id,
+            ))
+            refresh_priorities(conn)
+
+        return {"report_id": report_id, **context}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print("[ROAD-CONTEXT] Refresh endpoint failed:", repr(exc), flush=True)
+        raise HTTPException(status_code=500, detail="Could not refresh road context. Check Render logs.") from exc
 
 
 # --------------------------------------------------
