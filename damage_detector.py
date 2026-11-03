@@ -81,6 +81,23 @@ def detect_damage(image_path):
     )[0]
 
     predictions = output[0].T
+    raw_scores = predictions[:, 4:8]
+
+print(
+    "[YOLO-DEBUG]",
+    {
+        "output_shape": list(output.shape),
+        "prediction_shape": list(predictions.shape),
+        "max_class_confidence": (
+            round(float(np.max(raw_scores)), 4)
+            if raw_scores.size else None
+        ),
+        "above_020": int(np.sum(np.max(raw_scores, axis=1) >= 0.20)),
+        "above_030": int(np.sum(np.max(raw_scores, axis=1) >= 0.30)),
+        "above_040": int(np.sum(np.max(raw_scores, axis=1) >= 0.40)),
+    },
+    flush=True,
+)
 
     boxes = []
     scores = []
