@@ -4,6 +4,8 @@ import os
 import shutil
 import tempfile
 import time
+import threading
+import urllib.error
 import uuid
 import urllib.parse
 import urllib.request
@@ -149,17 +151,76 @@ def ensure_columns(conn):
 # --------------------------------------------------
 
 def _nominatim_request(params):
-    """Call Nominatim with a descriptive User-Agent."""
-    url = "https://nominatim.openstreetmap.org/" + params.pop("_endpoint") + "?" + urllib.parse.urlencode(params)
+    # Shared Nominatim request protection
+_nominatim_lock = threading.Lock()
+_nominatim_last_request = 0.0
+_nominatim_blocked_until = 0.0
+
+
+def _nominatim_request(params):
+    """Call Nominatim with rate limiting and a descriptive User-Agent."""
+
+    global _nominatim_last_request, _nominatim_blocked_until
+
+    with _nominatim_lock:
+        now = time.monotonic()
+
+        if now < _nominatim_blocked_until:
+            raise HTTPException(
+                status_code=503,
+                detail="Address lookup is temporarily rate-limited. Please try again later or use GPS.",
+            )
+
+        wait = 1.1 - (now - _nominatim_last_request)
+
+        if wait > 0:
+            time.sleep(wait)
+
+        _nominatim_last_request = time.monotonic()
+
+    endpoint = params.pop("_endpoint")
+
+    url = (
+        "https://nominatim.openstreetmap.org/"
+        + endpoint + "?"
+        + urllib.parse.urlencode(params)
+    )
+
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "RoadDamagePrioritizationProject/1.0 (educational prototype)",
+            "User-Agent": (
+                "RoadDamagePrioritizationProject/1.0 "
+                "(educational prototype)"
+            ),
             "Accept": "application/json",
         },
     )
-    with urllib.request.urlopen(request, timeout=12) as response:
-        return json.loads(response.read().decode("utf-8"))
+
+    try:
+        with urllib.request.urlopen(request, timeout=12) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            with _nominatim_lock:
+                _nominatim_blocked_until = time.monotonic() + 60
+
+            print(
+                "[ROAD-GEOCODE] Nominatim rate limit reached. "
+                "Pausing requests for 60 seconds.",
+                flush=True,
+            )
+
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Address lookup is temporarily rate-limited. "
+                    "Please wait before trying again or use GPS."
+                ),
+            ) from exc
+
+        raise
 
 
 def geocode_address(address):
