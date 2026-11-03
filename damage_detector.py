@@ -8,7 +8,7 @@ import onnxruntime as ort
 MODEL_PATH = Path(__file__).resolve().parent / "best.onnx"
 CONFIDENCE_THRESHOLD = 0.40
 IOU_THRESHOLD = 0.45
-INPUT_SIZE = 320
+INPUT_SIZE = 640
 
 CLASS_NAMES = {
     0: "D00_Longitudinal_crack",
