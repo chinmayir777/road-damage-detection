@@ -150,8 +150,7 @@ def ensure_columns(conn):
 # AUTOMATIC ROAD CONTEXT RETRIEVAL
 # --------------------------------------------------
 
-def _nominatim_request(params):
-    # Shared Nominatim request protection
+# Shared Nominatim request protection
 _nominatim_lock = threading.Lock()
 _nominatim_last_request = 0.0
 _nominatim_blocked_until = 0.0
@@ -190,8 +189,8 @@ def _nominatim_request(params):
         url,
         headers={
             "User-Agent": (
-                "RoadDamagePrioritizationProject/1.0 "
-                "(educational prototype)"
+                "RoadWatch/1.0 "
+                "(contact: your_actual_email@gmail.com)"
             ),
             "Accept": "application/json",
         },
@@ -221,8 +220,6 @@ def _nominatim_request(params):
             ) from exc
 
         raise
-
-
 def geocode_address(address):
     """Convert a user-entered address/landmark into coordinates."""
     query = (address or "").strip()
