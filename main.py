@@ -164,6 +164,20 @@ def ensure_columns(conn):
             TEXT
     """)
 
+    # Reconcile existing reports with the finalized workflow: only High
+    # uncertainty requires manual inspection.
+    conn.execute("""
+        UPDATE road_reports
+        SET
+            manual_verification_required = (uncertainty_level = 'High'),
+            decision_route = CASE
+                WHEN uncertainty_level = 'High' THEN 'Human verification'
+                WHEN uncertainty_level IN ('Medium', 'Low') THEN 'Automatic candidate'
+                ELSE decision_route
+            END
+        WHERE uncertainty_level IS NOT NULL
+    """)
+
 
 # --------------------------------------------------
 # AUTOMATIC ROAD CONTEXT RETRIEVAL
@@ -240,13 +254,10 @@ def _nominatim_request(params):
 
         raise
 def geocode_address(address):
-    """Convert an address into coordinates using Photon first, Nominatim second."""
+    """Convert a user-entered address/landmark into coordinates."""
     query = (address or "").strip()
     if len(query) < 3:
-        raise HTTPException(
-            status_code=400,
-            detail="Enter a more complete address or landmark.",
-        )
+        raise HTTPException(status_code=400, detail="Enter a more complete address or landmark.")
 
     if not hasattr(geocode_address, "cache"):
         geocode_address.cache = {}
@@ -254,38 +265,6 @@ def geocode_address(address):
     if key in geocode_address.cache:
         return dict(geocode_address.cache[key])
 
-    # Photon first: avoids making every address lookup depend on Nominatim.
-    try:
-        payload = _photon_lookup({"q": query, "limit": 1, "lang": "en"}, timeout=4)
-        features = payload.get("features") or []
-        if features:
-            feature = features[0]
-            coordinates = (feature.get("geometry") or {}).get("coordinates") or []
-            if len(coordinates) >= 2:
-                props = feature.get("properties") or {}
-                parts = [
-                    props.get("name"),
-                    props.get("district"),
-                    props.get("city"),
-                    props.get("state"),
-                    props.get("country"),
-                ]
-                display_name = ", ".join(dict.fromkeys(
-                    str(part).strip() for part in parts
-                    if part and str(part).strip()
-                ))
-                result = {
-                    "latitude": float(coordinates[1]),
-                    "longitude": float(coordinates[0]),
-                    "display_name": display_name or query,
-                    "source": "Photon OpenStreetMap",
-                }
-                geocode_address.cache[key] = dict(result)
-                return result
-    except Exception as exc:
-        print("[ROAD-GEOCODE] Photon lookup failed:", repr(exc), flush=True)
-
-    # Nominatim fallback only when Photon has no usable result.
     try:
         results = _nominatim_request({
             "_endpoint": "search",
@@ -293,24 +272,25 @@ def geocode_address(address):
             "format": "jsonv2",
             "limit": 1,
             "addressdetails": 1,
+            "extratags": 1,
         })
-        if results:
-            item = results[0]
-            result = {
-                "latitude": float(item["lat"]),
-                "longitude": float(item["lon"]),
-                "display_name": item.get("display_name") or query,
-                "source": "OpenStreetMap Nominatim",
-            }
-            geocode_address.cache[key] = dict(result)
-            return result
-    except Exception as exc:
-        print("[ROAD-GEOCODE] Nominatim fallback failed:", repr(exc), flush=True)
+        if not results:
+            raise HTTPException(status_code=404, detail="Address not found. Try adding the area, city, or a nearby landmark.")
 
-    raise HTTPException(
-        status_code=503,
-        detail="Address lookup is temporarily unavailable. Please use GPS coordinates or try again later.",
-    )
+        item = results[0]
+        result = {
+            "latitude": float(item["lat"]),
+            "longitude": float(item["lon"]),
+            "display_name": item.get("display_name") or query,
+            "source": "OpenStreetMap Nominatim",
+        }
+        geocode_address.cache[key] = dict(result)
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print("[ROAD-GEOCODE] Lookup failed:", repr(exc), flush=True)
+        raise HTTPException(status_code=502, detail="Address lookup is temporarily unavailable. Use current GPS or try again.") from exc
 
 
 def _overpass_road_context(latitude, longitude):
@@ -363,7 +343,7 @@ def _overpass_road_context(latitude, longitude):
     raise RuntimeError("All Overpass endpoints failed: " + " | ".join(errors))
 
 
-def _photon_lookup(params, timeout=3):
+def _photon_lookup(params, timeout=10):
     """Query Photon (OpenStreetMap-based geocoder) as an Overpass fallback."""
     url = "https://photon.komoot.io/" + ("reverse" if "lat" in params and "lon" in params and "q" not in params else "api/")
     url += "?" + urllib.parse.urlencode(params, doseq=True)
@@ -544,8 +524,41 @@ def retrieve_road_context(latitude, longitude):
             errors.append("Nominatim road search")
             print("[ROAD-CONTEXT] Nominatim road search failed:", repr(exc), flush=True)
 
-    # 4. Skip slow/unreliable Overpass requests; Photon supplies facility data.
+    # 4. Overpass is attempted for named facilities, but is not required.
     elements = []
+    try:
+        elements = _overpass_road_context(latitude, longitude)
+    except Exception as exc:
+        errors.append("Overpass")
+        print("[ROAD-CONTEXT] Overpass unavailable; using Photon facility lookup:", repr(exc), flush=True)
+
+    for element in elements:
+        tags = element.get("tags") or {}
+        center = element.get("center") or {}
+        lat = element.get("lat", center.get("lat"))
+        lon = element.get("lon", center.get("lon"))
+        name = str(tags.get("name") or "").strip()
+        if lat is None or lon is None or not name:
+            continue
+        props = {
+            "osm_key": next((k for k in ("amenity", "highway", "railway", "public_transport") if tags.get(k)), ""),
+            "osm_value": next((tags.get(k) for k in ("amenity", "highway", "railway", "public_transport") if tags.get(k)), ""),
+            "osm_type": str(element.get("type") or "").upper(),
+            "osm_id": element.get("id"),
+            "name": name,
+        }
+        facility_category, location_group = classify_facility(props)
+        if facility_category:
+            kind = {"N": "node", "W": "way", "R": "relation"}.get(props["osm_type"])
+            osm_url = f"https://www.openstreetmap.org/{kind}/{props['osm_id']}" if kind and props["osm_id"] else None
+            facility_candidates.append({
+                "distance": distance_m(lat, lon),
+                "name": name,
+                "category": facility_category,
+                "location_group": location_group,
+                "osm_url": osm_url,
+                "source": "Overpass",
+            })
 
     # 5. Photon reverse lookup with OSM tag filters: request named nearby
     # facilities by category, rather than relying on broad text search ranking.
@@ -564,7 +577,7 @@ def retrieve_road_context(latitude, longitude):
                 "limit": 20,
                 "lang": "en",
                 "osm_tag": tag_group,
-            }, timeout=3)
+            }, timeout=8)
             add_photon_features(payload, "Photon nearby search")
         except Exception as exc:
             errors.append("Photon nearby search")
@@ -791,36 +804,16 @@ def assess_severity(detections, features):
     return "Minor"
 
 def confidence_uncertainty(detections):
-    """
-    Provisional uncertainty heuristic.
-    Confidence scores are not statistically calibrated.
-    """
-
+    """Require manual inspection only when AI uncertainty is High."""
     if not detections:
-        return (
-            None,
-            "High",
-            True,
-            "Human verification",
-        )
+        return (None, "High", True, "Human verification")
 
     values = [
-        max(
-            0.0,
-            min(
-                1.0,
-                float(d.get("confidence", 0) or 0),
-            ),
-        )
+        max(0.0, min(1.0, float(d.get("confidence", 0) or 0)))
         for d in detections
     ]
-
     mean_confidence = sum(values) / len(values)
-
-    low_fraction = (
-        sum(value < 0.40 for value in values)
-        / len(values)
-    )
+    low_fraction = sum(value < 0.40 for value in values) / len(values)
 
     if mean_confidence < 0.40 or low_fraction >= 0.5:
         uncertainty = "High"
@@ -829,17 +822,9 @@ def confidence_uncertainty(detections):
     else:
         uncertainty = "Low"
 
-    if mean_confidence >= 0.75 and low_fraction == 0:
-        route = "Automatic candidate"
-        verification_required = False
-
-    elif mean_confidence >= 0.45:
-        route = "Review"
-        verification_required = True
-
-    else:
-        route = "Human verification"
-        verification_required = True
+    # Medium and Low uncertainty continue through automatic prioritization.
+    verification_required = uncertainty == "High"
+    route = "Human verification" if verification_required else "Automatic candidate"
 
     return (
         round(mean_confidence, 4),
@@ -847,6 +832,7 @@ def confidence_uncertainty(detections):
         verification_required,
         route,
     )
+
 
 
 # --------------------------------------------------
@@ -1026,16 +1012,17 @@ def refresh_priorities(conn):
         severity = row[7]
         score = scores.get(report_id, 0)
 
-        # Relative TOPSIS rank cannot override these absolute safety rules.
+        # High uncertainty requires manual verification. Other reports are
+        # eligible for automatic priority assignment, including High priority.
         if severity == "Unconfirmed" or confidence < 0.15:
             priority = "Low"
             score = min(score, 33)
-        elif verification_required or confidence < 0.65:
+        elif verification_required:
             priority = "Medium" if confidence >= 0.25 else "Low"
             score = min(score, 66 if priority == "Medium" else 33)
-        elif severity == "Severe":
+        elif severity == "Severe" or score >= 67:
             priority = "High"
-        elif severity == "Moderate":
+        elif severity == "Moderate" or score >= 34:
             priority = "Medium"
             score = min(score, 66)
         else:
