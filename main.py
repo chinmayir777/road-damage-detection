@@ -1293,7 +1293,7 @@ def refresh_report_context(
                     traffic_level = COALESCE(%s, traffic_level),
                     context_source = %s,
                     context_retrieved_at =
-                        CASE WHEN %s IS NOT NULL THEN NOW()
+                        CASE WHEN %s::text IS NOT NULL THEN NOW()
                              ELSE context_retrieved_at END,
                     context_status = %s
                 WHERE report_id = %s
