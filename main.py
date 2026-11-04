@@ -397,7 +397,7 @@ def _overpass_road_context(latitude, longitude):
     raise RuntimeError("All Overpass endpoints failed: " + " | ".join(errors))
 
 
-def _photon_lookup(params, timeout=10):
+def _photon_lookup(params, timeout=3):
     """Query Photon (OpenStreetMap-based geocoder) as an Overpass fallback."""
     url = "https://photon.komoot.io/" + ("reverse" if "lat" in params and "lon" in params and "q" not in params else "api/")
     url += "?" + urllib.parse.urlencode(params, doseq=True)
@@ -578,13 +578,9 @@ def retrieve_road_context(latitude, longitude):
             errors.append("Nominatim road search")
             print("[ROAD-CONTEXT] Nominatim road search failed:", repr(exc), flush=True)
 
-    # 4. Overpass is attempted for named facilities, but is not required.
-    elements = []
-    try:
-        elements = _overpass_road_context(latitude, longitude)
-    except Exception as exc:
-        errors.append("Overpass")
-        print("[ROAD-CONTEXT] Overpass unavailable; using Photon facility lookup:", repr(exc), flush=True)
+    # 4. Skip Overpass because its public servers are unreliable.
+# Photon is used for road and nearby facility information.
+     elements = []
 
     for element in elements:
         tags = element.get("tags") or {}
@@ -631,7 +627,7 @@ def retrieve_road_context(latitude, longitude):
                 "limit": 20,
                 "lang": "en",
                 "osm_tag": tag_group,
-            }, timeout=8)
+            }, timeout=3)
             add_photon_features(payload, "Photon nearby search")
         except Exception as exc:
             errors.append("Photon nearby search")
