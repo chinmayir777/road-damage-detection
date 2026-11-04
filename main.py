@@ -397,13 +397,35 @@ def retrieve_road_context(latitude, longitude):
             props = feature.get("properties") or {}
             osm_key = str(props.get("osm_key") or "").lower()
             osm_value = str(props.get("osm_value") or "").lower()
+            geometry = feature.get("geometry") or {}
+            coords = geometry.get("coordinates") or []
+            feature_distance = None
+            if len(coords) >= 2:
+                feature_distance = distance_m(coords[1], coords[0])
+
+            # Use nearby features returned by Photon reverse lookup as POI evidence too.
+            if feature_distance is not None and feature_distance <= 1500:
+                if (osm_key == "amenity" and osm_value in {
+                    "school", "university", "college", "kindergarten",
+                    "hospital", "clinic", "doctors",
+                }):
+                    nearby.append((feature_distance, "School/Hospital"))
+                elif (osm_key in {"railway", "public_transport"} and osm_value in {
+                    "station", "halt", "tram_stop", "platform", "stop_position",
+                }) or (osm_key == "amenity" and osm_value in {
+                    "bus_station", "bus_stop", "taxi",
+                }) or (osm_key == "highway" and osm_value in {
+                    "traffic_signals", "crossing", "stop",
+                }):
+                    nearby.append((feature_distance, "Junction/Transit"))
+
             if osm_key == "highway" and osm_value in road_classes:
                 name = props.get("name")
                 if name and result["road_name"] == "Not available":
                     result["road_name"] = str(name)
                 if result["road_class"] == "Not available":
                     result["road_class"] = osm_value
-                break
+                # Do not break: reverse results may also contain useful POIs.
     except Exception as exc:
         errors.append("Photon reverse")
         print("[ROAD-CONTEXT] Photon reverse failed:", repr(exc), flush=True)
@@ -456,12 +478,16 @@ def retrieve_road_context(latitude, longitude):
             nearby.append((distance_m(lat, lon), "Junction/Transit"))
 
     # Photon text search provides nearby mapped POIs without Overpass.
-    # Results are spatially filtered to 800 m to avoid distant matches.
+    # Results are spatially filtered to 1500 m to include relevant nearby facilities
+    # while avoiding matches elsewhere in the city.
     if not nearby:
         poi_queries = (
-            ("school", "amenity", {"school"}, "School/Hospital"),
-            ("hospital", "amenity", {"hospital", "clinic"}, "School/Hospital"),
+            ("school", "amenity", {"school", "kindergarten"}, "School/Hospital"),
+            ("college university", "amenity", {"college", "university"}, "School/Hospital"),
+            ("hospital clinic", "amenity", {"hospital", "clinic", "doctors"}, "School/Hospital"),
+            ("bus stop", "highway", {"bus_stop"}, "Junction/Transit"),
             ("bus station", "amenity", {"bus_station", "bus_stop"}, "Junction/Transit"),
+            ("metro station", "railway", {"station", "halt", "tram_stop"}, "Junction/Transit"),
             ("railway station", "railway", {"station", "halt", "tram_stop"}, "Junction/Transit"),
             ("traffic signals", "highway", {"traffic_signals", "crossing", "stop"}, "Junction/Transit"),
         )
@@ -480,7 +506,13 @@ def retrieve_road_context(latitude, longitude):
                     props = feature.get("properties") or {}
                     osm_key = str(props.get("osm_key") or "").lower()
                     osm_value = str(props.get("osm_value") or "").lower()
-                    if distance <= 800 and osm_key == expected_key and osm_value in expected_values:
+                    matches_expected = osm_key == expected_key and osm_value in expected_values
+                    if term in {"metro station", "railway station"}:
+                        matches_expected = matches_expected or (
+                            osm_key == "public_transport"
+                            and osm_value in {"station", "platform", "stop_position"}
+                        )
+                    if distance <= 1500 and matches_expected:
                         nearby.append((distance, label))
             except Exception as exc:
                 # One failed POI category must not prevent other categories.
