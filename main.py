@@ -311,24 +311,36 @@ def _overpass_road_context(latitude, longitude):
     raise RuntimeError("All Overpass endpoints failed: " + " | ".join(errors))
 
 
-def retrieve_road_context(latitude, longitude):
-    """
-    Retrieve the nearest mapped road and nearby mapped facilities.
+def _photon_lookup(params, timeout=10):
+    """Query Photon (OpenStreetMap-based geocoder) as an Overpass fallback."""
+    url = "https://photon.komoot.io/" + ("reverse" if "lat" in params and "lon" in params and "q" not in params else "api/")
+    url += "?" + urllib.parse.urlencode(params)
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "RoadWatch/1.0 (contact: chinmayir777@gmail.com)",
+            "Accept": "application/geo+json, application/json",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
 
-    Nominatim reverse-geocoding is used as a fallback for road names/classes.
-    Overpass is used for nearby road ways and facilities. Traffic is not
-    inferred from map data; the authority supplies that assessment separately.
+
+def retrieve_road_context(latitude, longitude):
+    """Retrieve road metadata and nearby mapped facilities with provider fallbacks.
+
+    Traffic is deliberately not inferred from map data. Authority-assessed
+    High/Medium/Low traffic is stored separately and must survive context refresh.
     """
     latitude = float(latitude)
     longitude = float(longitude)
-
     result = {
         "road_name": "Not available",
         "road_class": "Not available",
         "road_importance": "Unknown",
         "location_type": "General",
         "traffic_level": "Unavailable",
-        "context_source": "OpenStreetMap",
+        "context_source": "OpenStreetMap-based geocoding",
         "context_status": "Road context lookup pending",
     }
 
@@ -345,206 +357,171 @@ def retrieve_road_context(latitude, longitude):
         "living_street", "service", "road", "pedestrian", "cycleway",
         "footway", "path",
     }
-
-    # Nominatim address keys that represent a road rather than a POI.
-    road_address_keys = (
-        "road", "residential", "primary", "secondary", "tertiary",
-        "unclassified", "service", "living_street", "trunk", "motorway",
-        "pedestrian", "cycleway", "footway", "path",
-    )
-
+    errors = []
     reverse_data = {}
-    elements = []
-    lookup_errors = []
+    address = {}
+    nearby = []
 
-    # 1. Reverse lookup: use both address road fields and the returned OSM
-    # object metadata. A bus stop must never be treated as a road.
+    def distance_m(lat, lon):
+        dy = (float(lat) - latitude) * 111320.0
+        dx = (float(lon) - longitude) * 111320.0 * max(0.01, abs(math.cos(math.radians(latitude))))
+        return math.hypot(dx, dy)
+
+    # 1. Nominatim reverse lookup: reliable source for the human-readable road name.
     try:
         reverse_data = _nominatim_request({
-            "_endpoint": "reverse",
-            "format": "jsonv2",
-            "lat": latitude,
-            "lon": longitude,
-            "zoom": 18,
-            "addressdetails": 1,
-            "extratags": 1,
+            "_endpoint": "reverse", "format": "jsonv2",
+            "lat": latitude, "lon": longitude, "zoom": 18,
+            "addressdetails": 1, "extratags": 1,
         }) or {}
-
         address = reverse_data.get("address") or {}
-
-        for address_key in road_address_keys:
-            if address.get(address_key):
-                result["road_name"] = str(address[address_key])
-                if address_key in road_classes and address_key != "road":
-                    result["road_class"] = address_key
+        for key_name in ("road", "residential", "pedestrian", "path", "footway", "cycleway"):
+            if address.get(key_name):
+                result["road_name"] = str(address[key_name])
                 break
-
-        # Nominatim sometimes returns a road object name/type even when the
-        # address dictionary does not contain an explicit "road" key.
+        # Nominatim may expose highway classification in the returned object.
+        tags = reverse_data.get("extratags") or {}
+        candidate_class = str(tags.get("highway") or reverse_data.get("type") or "").lower()
         category = str(reverse_data.get("category") or reverse_data.get("class") or "").lower()
-        object_type = str(reverse_data.get("type") or "").lower()
-
-        if category in {"highway", "道路"} and object_type in road_classes:
-            if result["road_class"] == "Not available":
-                result["road_class"] = object_type
-            if result["road_name"] == "Not available" and reverse_data.get("name"):
-                result["road_name"] = str(reverse_data["name"])
-
+        if candidate_class in road_classes and (category in {"highway", ""} or tags.get("highway")):
+            result["road_class"] = candidate_class
     except Exception as exc:
-        lookup_errors.append("Nominatim reverse lookup failed")
-        print(
-            "[ROAD-CONTEXT] Nominatim reverse lookup failed:",
-            repr(exc),
-            flush=True,
-        )
+        errors.append("Nominatim reverse")
+        print("[ROAD-CONTEXT] Nominatim reverse failed:", repr(exc), flush=True)
 
-    # 2. Query mapped roads and nearby public facilities. Multiple Overpass
-    # instances are attempted inside this helper.
+    # 2. Photon reverse lookup. Accept only actual highway features, never bus stops.
+    try:
+        photon = _photon_lookup({"lat": latitude, "lon": longitude, "lang": "en"})
+        features = photon.get("features") or []
+        for feature in features:
+            props = feature.get("properties") or {}
+            osm_key = str(props.get("osm_key") or "").lower()
+            osm_value = str(props.get("osm_value") or "").lower()
+            if osm_key == "highway" and osm_value in road_classes:
+                name = props.get("name")
+                if name and result["road_name"] == "Not available":
+                    result["road_name"] = str(name)
+                if result["road_class"] == "Not available":
+                    result["road_class"] = osm_value
+                break
+    except Exception as exc:
+        errors.append("Photon reverse")
+        print("[ROAD-CONTEXT] Photon reverse failed:", repr(exc), flush=True)
+
+    # 3. Search for the named road. Nominatim search results expose class/type
+    # for mapped highway objects and can work when Overpass is unreachable.
+    if result["road_name"] != "Not available" and result["road_class"] == "Not available":
+        try:
+            city_hint = ", ".join(str(address.get(k)) for k in ("city", "town", "suburb", "state") if address.get(k))
+            query_text = result["road_name"] + (", " + city_hint if city_hint else "")
+            matches = _nominatim_request({
+                "_endpoint": "search", "q": query_text, "format": "jsonv2",
+                "limit": 5, "addressdetails": 1, "extratags": 1,
+            }) or []
+            for item in matches:
+                tags = item.get("extratags") or {}
+                highway = str(tags.get("highway") or item.get("type") or "").lower()
+                category = str(item.get("category") or item.get("class") or "").lower()
+                if highway in road_classes and (category in {"highway", ""} or tags.get("highway")):
+                    result["road_class"] = highway
+                    if item.get("name"):
+                        result["road_name"] = str(item["name"])
+                    break
+        except Exception as exc:
+            errors.append("Nominatim road search")
+            print("[ROAD-CONTEXT] Nominatim road search failed:", repr(exc), flush=True)
+
+    # 4. Overpass remains first choice for nearby facilities, but it is optional.
+    elements = []
     try:
         elements = _overpass_road_context(latitude, longitude)
     except Exception as exc:
-        lookup_errors.append("Overpass lookup failed")
-        print(
-            "[ROAD-CONTEXT] Overpass lookup failed:",
-            repr(exc),
-            flush=True,
-        )
-
-    road_candidates = []
-    nearby_features = []
-
-    def distance_squared(lat, lon):
-        # Longitude is scaled by latitude so the comparison is meaningful.
-        return (
-            (float(lat) - latitude) ** 2
-            + ((float(lon) - longitude)
-               * max(0.01, abs(math.cos(math.radians(latitude))))) ** 2
-        )
+        errors.append("Overpass")
+        print("[ROAD-CONTEXT] Overpass unavailable; using Photon POI fallback:", repr(exc), flush=True)
 
     for element in elements:
         tags = element.get("tags") or {}
-        highway = str(tags.get("highway") or "").lower()
         center = element.get("center") or {}
-        item_lat = element.get("lat", center.get("lat"))
-        item_lon = element.get("lon", center.get("lon"))
-
-        if (
-            element.get("type") == "way"
-            and highway in road_classes
-            and item_lat is not None
-            and item_lon is not None
-        ):
-            road_candidates.append((
-                distance_squared(item_lat, item_lon),
-                0 if tags.get("name") else 1,
-                str(tags.get("name") or ""),
-                highway,
-            ))
-
+        lat = element.get("lat", center.get("lat"))
+        lon = element.get("lon", center.get("lon"))
+        if lat is None or lon is None:
+            continue
         amenity = str(tags.get("amenity") or "").lower()
+        highway = str(tags.get("highway") or "").lower()
         public_transport = str(tags.get("public_transport") or "").lower()
         railway = str(tags.get("railway") or "").lower()
-
-        feature_type = None
         if amenity in {"school", "hospital", "clinic"}:
-            feature_type = "School/Hospital"
-        elif (
-            amenity in {"bus_station", "bus_stop"}
-            or public_transport in {"station", "platform", "stop_position"}
-            or railway in {"station", "halt", "tram_stop"}
-            or highway in {"traffic_signals", "crossing", "stop"}
-            or tags.get("junction")
-        ):
-            feature_type = "Junction/Transit"
+            nearby.append((distance_m(lat, lon), "School/Hospital"))
+        elif amenity in {"bus_station", "bus_stop"} or public_transport in {"station", "platform", "stop_position"} or railway in {"station", "halt", "tram_stop"} or highway in {"traffic_signals", "crossing", "stop"} or tags.get("junction"):
+            nearby.append((distance_m(lat, lon), "Junction/Transit"))
 
-        if feature_type and item_lat is not None and item_lon is not None:
-            nearby_features.append((
-                distance_squared(item_lat, item_lon),
-                feature_type,
-                str(tags.get("name") or ""),
-            ))
+    # Photon text search provides nearby mapped POIs without Overpass.
+    # Results are spatially filtered to 800 m to avoid distant matches.
+    if not nearby:
+        poi_queries = (
+            ("school", "amenity", {"school"}, "School/Hospital"),
+            ("hospital", "amenity", {"hospital", "clinic"}, "School/Hospital"),
+            ("bus station", "amenity", {"bus_station", "bus_stop"}, "Junction/Transit"),
+            ("railway station", "railway", {"station", "halt", "tram_stop"}, "Junction/Transit"),
+            ("traffic signals", "highway", {"traffic_signals", "crossing", "stop"}, "Junction/Transit"),
+        )
+        for term, expected_key, expected_values, label in poi_queries:
+            try:
+                payload = _photon_lookup({
+                    "q": term, "lat": latitude, "lon": longitude,
+                    "limit": 5, "lang": "en",
+                }, timeout=5)
+                for feature in payload.get("features") or []:
+                    geometry = feature.get("geometry") or {}
+                    coords = geometry.get("coordinates") or []
+                    if len(coords) < 2:
+                        continue
+                    distance = distance_m(coords[1], coords[0])
+                    props = feature.get("properties") or {}
+                    osm_key = str(props.get("osm_key") or "").lower()
+                    osm_value = str(props.get("osm_value") or "").lower()
+                    if distance <= 800 and osm_key == expected_key and osm_value in expected_values:
+                        nearby.append((distance, label))
+            except Exception as exc:
+                # One failed POI category must not prevent other categories.
+                print("[ROAD-CONTEXT] Photon POI search failed for", term, repr(exc), flush=True)
 
-    # Prefer the nearest named mapped road; if no named road exists, use the
-    # nearest mapped road. Do not select point features such as bus stops.
-    if road_candidates:
-        road_candidates.sort(key=lambda item: (item[1], item[0]))
-        _, _, mapped_name, mapped_class = road_candidates[0]
-
-        if mapped_name:
-            result["road_name"] = mapped_name
-        result["road_class"] = mapped_class
-
-    # If Overpass did not return a road, retain the road name/class obtained
-    # from Nominatim instead of replacing it with an unavailable value.
-    if result["road_name"] == "Not available":
-        reverse_name = reverse_data.get("name")
-        reverse_category = str(
-            reverse_data.get("category") or reverse_data.get("class") or ""
-        ).lower()
-        reverse_type = str(reverse_data.get("type") or "").lower()
-
-        if reverse_name and reverse_category == "highway":
-            result["road_name"] = str(reverse_name)
-        if result["road_class"] == "Not available" and reverse_type in road_classes:
-            result["road_class"] = reverse_type
-
-    # 3. Derive importance only from a valid road classification.
+    # 5. If Nominatim identified a road name but not its class, use only a
+    # conservative fallback based on explicit road-name tags; never guess class.
     road_class = result["road_class"]
-    if road_class in {
-        "motorway", "motorway_link", "trunk", "trunk_link",
-        "primary", "primary_link",
-    }:
+    if road_class in {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link"}:
         result["road_importance"] = "Major"
-    elif road_class in {
-        "secondary", "secondary_link", "tertiary", "tertiary_link",
-    }:
+    elif road_class in {"secondary", "secondary_link", "tertiary", "tertiary_link"}:
         result["road_importance"] = "Collector"
-    elif road_class in {
-        "unclassified", "residential", "living_street", "service", "road",
-        "pedestrian", "cycleway", "footway", "path",
-    }:
+    elif road_class in {"unclassified", "residential", "living_street", "service", "road", "pedestrian", "cycleway", "footway", "path"}:
         result["road_importance"] = "Local"
     else:
         result["road_importance"] = "Unknown"
 
-    # 4. Report the nearest mapped facility type. "General" means no
-    # qualifying nearby facility was found in the available map data.
-    if nearby_features:
-        nearby_features.sort(key=lambda item: item[0])
-        result["location_type"] = nearby_features[0][1]
+    if nearby:
+        nearby.sort(key=lambda item: item[0])
+        result["location_type"] = nearby[0][1]
     else:
         result["location_type"] = "General"
 
-    # OpenStreetMap road/POI data is not a live traffic feed. Do not overwrite
-    # the authority's separate High/Medium/Low assessment during context refresh.
+    # Do not replace authority-entered traffic with a map-provider placeholder.
     result["traffic_level"] = "Unavailable"
-    result["context_source"] = (
-        "OpenStreetMap Nominatim + Overpass API"
-        if elements else "OpenStreetMap Nominatim"
-    )
+    used = ["Nominatim"]
+    if result["road_class"] != "Not available" or nearby:
+        used.append("Photon/OSM fallback")
+    if elements:
+        used.append("Overpass")
+    result["context_source"] = " + ".join(used)
 
-    found_road = (
-        result["road_name"] != "Not available"
-        or result["road_class"] != "Not available"
-    )
-    if found_road:
-        result["context_status"] = (
-            "Road details retrieved; nearby mapped facilities checked; "
-            "traffic assessed separately by authority"
-        )
+    if result["road_name"] != "Not available" or result["road_class"] != "Not available":
+        result["context_status"] = "Road details retrieved; nearby mapped facilities checked; traffic assessed separately by authority"
     else:
-        result["context_status"] = (
-            "Road details not found in available map data; "
-            "traffic assessed separately by authority"
-        )
-
-    if lookup_errors:
-        result["context_status"] += (
-            "; one or more map lookups were unavailable"
-        )
+        result["context_status"] = "Road details not found in available map data; traffic assessed separately by authority"
+    if errors:
+        result["context_status"] += "; fallback providers attempted where available"
 
     print("[ROAD-CONTEXT] " + json.dumps({
-        "coordinates": key,
+        "coordinates": (round(latitude, 5), round(longitude, 5)),
         "road_name": result["road_name"],
         "road_class": result["road_class"],
         "road_importance": result["road_importance"],
