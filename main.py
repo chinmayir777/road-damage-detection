@@ -190,7 +190,7 @@ def _nominatim_request(params):
         headers={
             "User-Agent": (
                 "RoadWatch/1.0 "
-                "(contact: your_actual_email@gmail.com)"
+                "(contact: chinmayir777@gmail.com)"
             ),
             "Accept": "application/json",
         },
@@ -406,71 +406,103 @@ def extract_features(detections):
         "damage_density": round(len(unique) / max(1.0, region_area / 10000.0), 4),
     }
 
+
+
 def assess_severity(detections, features):
-    """Conservative severity proxy; weak predictions are not confirmed damage."""
+    """
+    Conservative severity assessment.
+    No valid detections = Unconfirmed.
+    Low-confidence detections = Minor.
+    Higher severity requires stronger model evidence.
+    """
+
     if not detections:
         return "Unconfirmed"
 
+    # Sort by confidence, highest first
     ordered = sorted(
         detections,
         key=lambda d: float(d.get("confidence", 0) or 0),
         reverse=True,
     )
+
+    # Remove overlapping duplicate detections
     unique = []
 
     for detection in ordered:
         box = detection.get("bbox_xyxy") or []
+
         if len(box) != 4:
             continue
+
         x1, y1, x2, y2 = map(float, box)
+
         if x2 <= x1 or y2 <= y1:
             continue
 
         duplicate = False
-        for kept in unique:
-            other = kept.get("bbox_xyxy") or []
+
+        for existing in unique:
+            other = existing.get("bbox_xyxy") or []
+
             if len(other) != 4:
                 continue
+
             a1, b1, a2, b2 = map(float, other)
-            ix1, iy1 = max(x1, a1), max(y1, b1)
-            ix2, iy2 = min(x2, a2), min(y2, b2)
-            intersection = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+
+            intersection = (
+                max(0, min(x2, a2) - max(x1, a1))
+                * max(0, min(y2, b2) - max(y1, b1))
+            )
+
             area1 = (x2 - x1) * (y2 - y1)
-            area2 = max(0.0, a2 - a1) * max(0.0, b2 - b1)
+            area2 = (a2 - a1) * (b2 - b1)
             union = area1 + area2 - intersection
+
             if union > 0 and intersection / union >= 0.50:
                 duplicate = True
                 break
+
         if not duplicate:
             unique.append(detection)
 
     if not unique:
         return "Unconfirmed"
 
-    confidences = [float(d.get("confidence", 0) or 0) for d in unique]
+    # Low-confidence detections cannot justify higher severity
+    confidences = [
+        float(d.get("confidence", 0) or 0)
+        for d in unique
+    ]
+
     average_confidence = sum(confidences) / len(confidences)
 
-    # Low-confidence predictions cannot establish physical severity.
     if average_confidence < 0.25:
-        return "Unconfirmed"
+        return "Minor"
 
+    # Only reasonably confident detections count toward
+    # Moderate or Severe classifications.
     confirmed = [
         d for d in unique
         if float(d.get("confidence", 0) or 0) >= 0.45
     ]
+
     if not confirmed:
-        return "Unconfirmed"
+        return "Minor"
 
     pothole_count = sum(
-        "pothole" in str(d.get("candidate_type") or d.get("damage_type") or "").lower()
+        "pothole" in str(
+            d.get("damage_type", "")
+        ).lower()
         for d in confirmed
     )
 
-    # Multiple separate confirmed damage regions are needed for Severe.
     if len(confirmed) >= 3 and pothole_count >= 1:
         return "Severe"
+
     if pothole_count >= 1 or len(confirmed) >= 2:
         return "Moderate"
+
     return "Minor"
 
 def confidence_uncertainty(detections):
@@ -741,7 +773,7 @@ def refresh_priorities(conn):
                 decision_route = %s
             WHERE report_id = %s
         """, (score, score, priority, route, report_id))
-
+@app.get("/", response_class=HTMLResponse)
 def dashboard():
     path = Path(__file__).resolve().parent / "dashboard.html"
 
