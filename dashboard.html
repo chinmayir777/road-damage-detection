@@ -364,7 +364,7 @@ $("reportForm").addEventListener("submit", async event => {
   }
 });
 
-/* Track report status */
+/* Track report status and display the submitted image. */
 $("trackForm").addEventListener("submit",async event => {
   event.preventDefault();
   clearNotice("trackNotice");
@@ -397,6 +397,16 @@ $("trackForm").addEventListener("submit",async event => {
         <strong>${escapeHtml(data.reference_code || reference)}</strong>
         <p style="margin-top:18px">Current Status</p>
         <span class="status-pill">${escapeHtml(status)}</span>
+
+        ${data.image_url ? `
+          <div style="margin-top:18px">
+            <p class="hint"><strong>Original Uploaded Road Image</strong></p>
+            <a href="${escapeHtml(API + data.image_url)}" target="_blank" rel="noopener">
+              <img src="${escapeHtml(API + data.image_url)}" alt="Original road damage image submitted with this report" style="display:block;width:100%;max-height:320px;object-fit:contain;background:#f7f9fc;border:1px solid #e2e8f0;border-radius:10px">
+            </a>
+          </div>` : `
+          <p class="hint" style="margin-top:16px">Original image is not available for this report. Older uploads may have been stored in temporary server storage.</p>`}
+
         <div class="steps">${timeline}</div>
         <p class="hint">Status reflects the latest information recorded by the system and does not guarantee a repair date.</p>
       </div>`;
