@@ -263,37 +263,61 @@ def geocode_address(address):
 
 def _overpass_road_context(latitude, longitude):
     """
-    Retrieve the nearest mapped road and nearby mapped POIs from OpenStreetMap.
-    This does not provide live traffic volume.
+    Retrieve mapped road ways and nearby facilities from OpenStreetMap.
+    Tries more than one public Overpass instance because individual instances
+    can be temporarily unavailable or rate-limited. This is not live traffic.
     """
     query = f"""
-    [out:json][timeout:12];
+    [out:json][timeout:15];
     (
-      way(around:180,{latitude},{longitude})["highway"];
-      nwr(around:250,{latitude},{longitude})["amenity"~"school|hospital|clinic|bus_station|bus_stop|parking"];
+      way(around:400,{latitude},{longitude})["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|service|road)$"];
+      nwr(around:400,{latitude},{longitude})["amenity"~"^(school|hospital|clinic|bus_station|bus_stop|parking)$"];
+      nwr(around:400,{latitude},{longitude})["public_transport"~"^(station|platform|stop_position)$"];
+      nwr(around:400,{latitude},{longitude})["railway"~"^(station|halt|tram_stop)$"];
+      node(around:400,{latitude},{longitude})["highway"~"^(traffic_signals|crossing|stop)$"];
     );
-    out tags center;
+    out center tags;
     """
-    url = "https://overpass-api.de/api/interpreter?" + urllib.parse.urlencode(
-        {"data": query}
-    )
-    request = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "RoadWatch/1.0 (contact: chinmayir777@gmail.com)",
-            "Accept": "application/json",
-        },
-    )
-    with urllib.request.urlopen(request, timeout=18) as response:
-        payload = json.loads(response.read().decode("utf-8"))
-    return payload.get("elements", [])
+
+    endpoints = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
+    ]
+    errors = []
+
+    for endpoint in endpoints:
+        url = endpoint + "?" + urllib.parse.urlencode({"data": query})
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "RoadWatch/1.0 (contact: chinmayir777@gmail.com)",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=14) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            return payload.get("elements", [])
+        except Exception as exc:
+            errors.append(f"{endpoint}: {exc!r}")
+            print(
+                "[ROAD-CONTEXT] Overpass endpoint failed:",
+                endpoint,
+                repr(exc),
+                flush=True,
+            )
+
+    raise RuntimeError("All Overpass endpoints failed: " + " | ".join(errors))
 
 
 def retrieve_road_context(latitude, longitude):
     """
-    Retrieve road classification and nearby mapped facilities.
-    Traffic remains explicitly unavailable because OSM map data is not a
-    live traffic feed. Missing display values use readable labels.
+    Retrieve the nearest mapped road and nearby mapped facilities.
+
+    Nominatim reverse-geocoding is used as a fallback for road names/classes.
+    Overpass is used for nearby road ways and facilities. Traffic is not
+    inferred from map data; the authority supplies that assessment separately.
     """
     latitude = float(latitude)
     longitude = float(longitude)
@@ -318,155 +342,216 @@ def retrieve_road_context(latitude, longitude):
         "motorway", "motorway_link", "trunk", "trunk_link",
         "primary", "primary_link", "secondary", "secondary_link",
         "tertiary", "tertiary_link", "unclassified", "residential",
-        "living_street", "service", "road",
+        "living_street", "service", "road", "pedestrian", "cycleway",
+        "footway", "path",
     }
 
+    # Nominatim address keys that represent a road rather than a POI.
+    road_address_keys = (
+        "road", "residential", "primary", "secondary", "tertiary",
+        "unclassified", "service", "living_street", "trunk", "motorway",
+        "pedestrian", "cycleway", "footway", "path",
+    )
+
+    reverse_data = {}
+    elements = []
+    lookup_errors = []
+
+    # 1. Reverse lookup: use both address road fields and the returned OSM
+    # object metadata. A bus stop must never be treated as a road.
     try:
-        # Nominatim is useful for the human-readable road/address name,
-        # but its nearest object may be a bus stop or another point feature.
-        try:
-            data = _nominatim_request({
-                "_endpoint": "reverse",
-                "format": "jsonv2",
-                "lat": latitude,
-                "lon": longitude,
-                "zoom": 18,
-                "addressdetails": 1,
-                "extratags": 1,
-            })
-            address = data.get("address") or {}
-            road_name = (
-                address.get("road")
-                or address.get("pedestrian")
-                or address.get("residential")
-                or address.get("path")
-                or address.get("footway")
-                or address.get("cycleway")
-            )
-            if road_name:
-                result["road_name"] = road_name
-        except Exception as exc:
-            print("[ROAD-CONTEXT] Nominatim reverse lookup failed:", repr(exc), flush=True)
+        reverse_data = _nominatim_request({
+            "_endpoint": "reverse",
+            "format": "jsonv2",
+            "lat": latitude,
+            "lon": longitude,
+            "zoom": 18,
+            "addressdetails": 1,
+            "extratags": 1,
+        }) or {}
 
-        # Use actual highway ways for road class; do not mistake
-        # highway=bus_stop on a point feature for a road classification.
-        elements = []
-        try:
-            elements = _overpass_road_context(latitude, longitude)
-        except Exception as exc:
-            print("[ROAD-CONTEXT] Overpass lookup failed:", repr(exc), flush=True)
+        address = reverse_data.get("address") or {}
 
-        road_candidates = []
-        nearby_pois = []
+        for address_key in road_address_keys:
+            if address.get(address_key):
+                result["road_name"] = str(address[address_key])
+                if address_key in road_classes and address_key != "road":
+                    result["road_class"] = address_key
+                break
 
-        for element in elements:
-            tags = element.get("tags") or {}
-            highway = tags.get("highway")
+        # Nominatim sometimes returns a road object name/type even when the
+        # address dictionary does not contain an explicit "road" key.
+        category = str(reverse_data.get("category") or reverse_data.get("class") or "").lower()
+        object_type = str(reverse_data.get("type") or "").lower()
 
-            if element.get("type") == "way" and highway in road_classes:
-                center = element.get("center") or {}
-                road_lat = center.get("lat")
-                road_lon = center.get("lon")
-
-                # Prefer named roads; among those, choose the closest mapped way.
-                if road_lat is not None and road_lon is not None:
-                    distance = (
-                        (float(road_lat) - latitude) ** 2
-                        + ((float(road_lon) - longitude)
-                           * max(0.01, abs(math.cos(math.radians(latitude))))) ** 2
-                    )
-                else:
-                    distance = 999999
-
-                road_candidates.append((
-                    0 if tags.get("name") else 1,
-                    distance,
-                    tags.get("name"),
-                    highway,
-                ))
-
-            amenity = tags.get("amenity")
-            if amenity in {
-                "school", "hospital", "clinic",
-                "bus_station", "bus_stop", "parking",
-            }:
-                center = element.get("center") or {}
-                poi_lat = element.get("lat", center.get("lat"))
-                poi_lon = element.get("lon", center.get("lon"))
-                if poi_lat is not None and poi_lon is not None:
-                    distance = (
-                        (float(poi_lat) - latitude) ** 2
-                        + ((float(poi_lon) - longitude)
-                           * max(0.01, abs(math.cos(math.radians(latitude))))) ** 2
-                    )
-                    nearby_pois.append((distance, amenity))
-
-        if road_candidates:
-            road_candidates.sort(key=lambda item: (item[0], item[1]))
-            _, _, mapped_name, road_class = road_candidates[0]
-            if mapped_name:
-                result["road_name"] = mapped_name
-            result["road_class"] = road_class
-
-        if result["road_class"] == "Not available":
-            result["road_importance"] = "Unknown"
-        elif result["road_class"] in {
-            "motorway", "motorway_link", "trunk", "trunk_link",
-            "primary", "primary_link",
-        }:
-            result["road_importance"] = "Major"
-        elif result["road_class"] in {
-            "secondary", "secondary_link", "tertiary", "tertiary_link",
-        }:
-            result["road_importance"] = "Collector"
-        else:
-            result["road_importance"] = "Local"
-
-        if nearby_pois:
-            nearby_pois.sort(key=lambda item: item[0])
-            nearest_amenity = nearby_pois[0][1]
-            if nearest_amenity in {"school", "hospital", "clinic"}:
-                result["location_type"] = "School/Hospital"
-            else:
-                result["location_type"] = "Junction/Transit"
-        else:
-            result["location_type"] = "General"
-
-        # OpenStreetMap does not provide live traffic volume/speed here.
-        result["traffic_level"] = "Unavailable"
-        result["context_source"] = (
-            "OpenStreetMap Nominatim + Overpass API"
-            if elements else "OpenStreetMap Nominatim"
-        )
-
-        if result["road_name"] != "Not available" or result["road_class"] != "Not available":
-            result["context_status"] = (
-                "Road details retrieved; nearby mapped facilities checked; "
-                "live traffic data unavailable"
-            )
-        else:
-            result["context_status"] = (
-                "Road details not found in map data; "
-                "live traffic data unavailable"
-            )
-
-        retrieve_road_context.cache[key] = dict(result)
-
-        print("[ROAD-CONTEXT] " + json.dumps({
-            "coordinates": key,
-            "road_name": result["road_name"],
-            "road_class": result["road_class"],
-            "road_importance": result["road_importance"],
-            "location_type": result["location_type"],
-            "traffic_level": result["traffic_level"],
-            "status": result["context_status"],
-        }), flush=True)
+        if category in {"highway", "道路"} and object_type in road_classes:
+            if result["road_class"] == "Not available":
+                result["road_class"] = object_type
+            if result["road_name"] == "Not available" and reverse_data.get("name"):
+                result["road_name"] = str(reverse_data["name"])
 
     except Exception as exc:
-        print("[ROAD-CONTEXT] Lookup failed:", repr(exc), flush=True)
-        result["context_status"] = (
-            "Map lookup unavailable; traffic data unavailable"
+        lookup_errors.append("Nominatim reverse lookup failed")
+        print(
+            "[ROAD-CONTEXT] Nominatim reverse lookup failed:",
+            repr(exc),
+            flush=True,
         )
+
+    # 2. Query mapped roads and nearby public facilities. Multiple Overpass
+    # instances are attempted inside this helper.
+    try:
+        elements = _overpass_road_context(latitude, longitude)
+    except Exception as exc:
+        lookup_errors.append("Overpass lookup failed")
+        print(
+            "[ROAD-CONTEXT] Overpass lookup failed:",
+            repr(exc),
+            flush=True,
+        )
+
+    road_candidates = []
+    nearby_features = []
+
+    def distance_squared(lat, lon):
+        # Longitude is scaled by latitude so the comparison is meaningful.
+        return (
+            (float(lat) - latitude) ** 2
+            + ((float(lon) - longitude)
+               * max(0.01, abs(math.cos(math.radians(latitude))))) ** 2
+        )
+
+    for element in elements:
+        tags = element.get("tags") or {}
+        highway = str(tags.get("highway") or "").lower()
+        center = element.get("center") or {}
+        item_lat = element.get("lat", center.get("lat"))
+        item_lon = element.get("lon", center.get("lon"))
+
+        if (
+            element.get("type") == "way"
+            and highway in road_classes
+            and item_lat is not None
+            and item_lon is not None
+        ):
+            road_candidates.append((
+                distance_squared(item_lat, item_lon),
+                0 if tags.get("name") else 1,
+                str(tags.get("name") or ""),
+                highway,
+            ))
+
+        amenity = str(tags.get("amenity") or "").lower()
+        public_transport = str(tags.get("public_transport") or "").lower()
+        railway = str(tags.get("railway") or "").lower()
+
+        feature_type = None
+        if amenity in {"school", "hospital", "clinic"}:
+            feature_type = "School/Hospital"
+        elif (
+            amenity in {"bus_station", "bus_stop"}
+            or public_transport in {"station", "platform", "stop_position"}
+            or railway in {"station", "halt", "tram_stop"}
+            or highway in {"traffic_signals", "crossing", "stop"}
+            or tags.get("junction")
+        ):
+            feature_type = "Junction/Transit"
+
+        if feature_type and item_lat is not None and item_lon is not None:
+            nearby_features.append((
+                distance_squared(item_lat, item_lon),
+                feature_type,
+                str(tags.get("name") or ""),
+            ))
+
+    # Prefer the nearest named mapped road; if no named road exists, use the
+    # nearest mapped road. Do not select point features such as bus stops.
+    if road_candidates:
+        road_candidates.sort(key=lambda item: (item[1], item[0]))
+        _, _, mapped_name, mapped_class = road_candidates[0]
+
+        if mapped_name:
+            result["road_name"] = mapped_name
+        result["road_class"] = mapped_class
+
+    # If Overpass did not return a road, retain the road name/class obtained
+    # from Nominatim instead of replacing it with an unavailable value.
+    if result["road_name"] == "Not available":
+        reverse_name = reverse_data.get("name")
+        reverse_category = str(
+            reverse_data.get("category") or reverse_data.get("class") or ""
+        ).lower()
+        reverse_type = str(reverse_data.get("type") or "").lower()
+
+        if reverse_name and reverse_category == "highway":
+            result["road_name"] = str(reverse_name)
+        if result["road_class"] == "Not available" and reverse_type in road_classes:
+            result["road_class"] = reverse_type
+
+    # 3. Derive importance only from a valid road classification.
+    road_class = result["road_class"]
+    if road_class in {
+        "motorway", "motorway_link", "trunk", "trunk_link",
+        "primary", "primary_link",
+    }:
+        result["road_importance"] = "Major"
+    elif road_class in {
+        "secondary", "secondary_link", "tertiary", "tertiary_link",
+    }:
+        result["road_importance"] = "Collector"
+    elif road_class in {
+        "unclassified", "residential", "living_street", "service", "road",
+        "pedestrian", "cycleway", "footway", "path",
+    }:
+        result["road_importance"] = "Local"
+    else:
+        result["road_importance"] = "Unknown"
+
+    # 4. Report the nearest mapped facility type. "General" means no
+    # qualifying nearby facility was found in the available map data.
+    if nearby_features:
+        nearby_features.sort(key=lambda item: item[0])
+        result["location_type"] = nearby_features[0][1]
+    else:
+        result["location_type"] = "General"
+
+    # OpenStreetMap road/POI data is not a live traffic feed. Do not overwrite
+    # the authority's separate High/Medium/Low assessment during context refresh.
+    result["traffic_level"] = "Unavailable"
+    result["context_source"] = (
+        "OpenStreetMap Nominatim + Overpass API"
+        if elements else "OpenStreetMap Nominatim"
+    )
+
+    found_road = (
+        result["road_name"] != "Not available"
+        or result["road_class"] != "Not available"
+    )
+    if found_road:
+        result["context_status"] = (
+            "Road details retrieved; nearby mapped facilities checked; "
+            "traffic assessed separately by authority"
+        )
+    else:
+        result["context_status"] = (
+            "Road details not found in available map data; "
+            "traffic assessed separately by authority"
+        )
+
+    if lookup_errors:
+        result["context_status"] += (
+            "; one or more map lookups were unavailable"
+        )
+
+    print("[ROAD-CONTEXT] " + json.dumps({
+        "coordinates": key,
+        "road_name": result["road_name"],
+        "road_class": result["road_class"],
+        "road_importance": result["road_importance"],
+        "location_type": result["location_type"],
+        "traffic_level": result["traffic_level"],
+        "status": result["context_status"],
+    }), flush=True)
 
     retrieve_road_context.cache[key] = dict(result)
     return result
@@ -1448,11 +1533,26 @@ def refresh_report_context(
 
             conn.execute("""
                 UPDATE road_reports
-                SET road_name = %s,
-                    road_class = %s,
-                    road_importance = COALESCE(%s, road_importance),
-                    location_type = COALESCE(%s, location_type),
-                    traffic_level = COALESCE(%s, traffic_level),
+                SET road_name = CASE
+                        WHEN %s = 'Not available' THEN road_name
+                        ELSE %s
+                    END,
+                    road_class = CASE
+                        WHEN %s = 'Not available' THEN road_class
+                        ELSE %s
+                    END,
+                    road_importance = CASE
+                        WHEN %s = 'Unknown' THEN road_importance
+                        ELSE %s
+                    END,
+                    location_type = CASE
+                        WHEN %s = 'General' THEN location_type
+                        ELSE %s
+                    END,
+                    traffic_level = CASE
+                        WHEN %s = 'Unavailable' THEN traffic_level
+                        ELSE COALESCE(%s, traffic_level)
+                    END,
                     context_source = %s,
                     context_retrieved_at =
                         CASE WHEN %s::text IS NOT NULL THEN NOW()
@@ -1460,11 +1560,13 @@ def refresh_report_context(
                     context_status = %s
                 WHERE report_id = %s
             """, (
-                context["road_name"], context.get("road_class"),
-                context.get("road_importance"), context.get("location_type"),
-                context.get("traffic_level"), context.get("context_source"),
-                context.get("context_source"), context.get("context_status"),
-                report_id,
+                context["road_name"], context["road_name"],
+                context.get("road_class"), context.get("road_class"),
+                context.get("road_importance"), context.get("road_importance"),
+                context.get("location_type"), context.get("location_type"),
+                context.get("traffic_level"), context.get("traffic_level"),
+                context.get("context_source"), context.get("context_source"),
+                context.get("context_status"), report_id,
             ))
             refresh_priorities(conn)
 
