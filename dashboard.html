@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -183,6 +182,7 @@ $("photo").addEventListener("change", () => {
 /* Automatically resolve an entered address to coordinates. */
 let geocodeTimer = null;
 let lastGeocodedAddress = "";
+let lastRequestedAddress = "";
 let geocodeRequestNumber = 0;
 
 async function geocodeAddress() {
@@ -190,12 +190,17 @@ async function geocodeAddress() {
   const status = $("geocodeStatus");
   const requestNumber = ++geocodeRequestNumber;
 
+  if (address === lastGeocodedAddress || address === lastRequestedAddress) {
+    return;
+  }
+
   if (address.length < 4) {
     status.textContent = "Enter a more complete address or landmark.";
     status.style.color = "#718096";
     return;
   }
 
+  lastRequestedAddress = address;
   status.textContent = "Finding coordinates for this address...";
   status.style.color = "#2856a6";
 
@@ -230,16 +235,20 @@ $("location").addEventListener("input", () => {
   clearTimeout(geocodeTimer);
   geocodeRequestNumber++;
   lastGeocodedAddress = "";
+  lastRequestedAddress = "";
   $("latitude").value = "";
   $("longitude").value = "";
   $("geocodeStatus").textContent = "Looking up coordinates after you finish entering the address...";
   $("geocodeStatus").style.color = "#2856a6";
-  geocodeTimer = setTimeout(geocodeAddress, 1200);
+  geocodeTimer = setTimeout(geocodeAddress, 2000);
 });
 
 $("location").addEventListener("blur", () => {
   clearTimeout(geocodeTimer);
-  if ($("location").value.trim() !== lastGeocodedAddress) geocodeAddress();
+  const address = $("location").value.trim();
+  if (address !== lastGeocodedAddress && address !== lastRequestedAddress) {
+    geocodeAddress();
+  }
 });
 
 /* GPS is the alternative to address lookup. */
