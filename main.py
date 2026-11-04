@@ -13,7 +13,7 @@ import urllib.request
 import psycopg
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
@@ -155,7 +155,13 @@ def ensure_columns(conn):
             DOUBLE PRECISION,
 
         ADD COLUMN IF NOT EXISTS proposed_score
-            DOUBLE PRECISION
+            DOUBLE PRECISION,
+
+        ADD COLUMN IF NOT EXISTS image_data
+            BYTEA,
+
+        ADD COLUMN IF NOT EXISTS image_mime_type
+            TEXT
     """)
 
 
@@ -1136,11 +1142,14 @@ def track_report(reference_code: str):
             db_url(),
             connect_timeout=10,
         ) as conn:
+            ensure_columns(conn)
             row = conn.execute("""
                 SELECT
                     reference_code,
                     report_status,
-                    submitted_at
+                    submitted_at,
+                    (image_data IS NOT NULL) AS has_image,
+                    image_path
                 FROM road_reports
                 WHERE reference_code::text = %s
             """, (reference_code,)).fetchone()
@@ -1158,6 +1167,11 @@ def track_report(reference_code: str):
                 row[2].isoformat()
                 if row[2] else None
             ),
+            "image_url": (
+                f"/api/track/{reference_code}/image"
+                if row[3] or (row[4] and Path(row[4]).is_file())
+                else None
+            ),
         }
 
     except HTTPException:
@@ -1174,6 +1188,54 @@ def track_report(reference_code: str):
             status_code=500,
             detail="Could not check report status.",
         )
+
+
+@app.get("/api/track/{reference_code}/image")
+def get_tracked_report_image(reference_code: str):
+    """Return the original image associated with a report reference code."""
+    try:
+        with psycopg.connect(db_url(), connect_timeout=10) as conn:
+            ensure_columns(conn)
+            row = conn.execute("""
+                SELECT image_data, image_mime_type, image_path
+                FROM road_reports
+                WHERE reference_code::text = %s
+            """, (reference_code,)).fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Report not found.")
+
+        image_data, mime_type, image_path = row
+
+        # New reports use persistent PostgreSQL BYTEA storage.
+        if image_data is not None:
+            return Response(
+                content=bytes(image_data),
+                media_type=mime_type or "application/octet-stream",
+                headers={"Cache-Control": "private, max-age=300", "X-Content-Type-Options": "nosniff"},
+            )
+
+        # Backward compatibility for older reports whose temporary file still exists.
+        if image_path and Path(image_path).is_file():
+            path = Path(image_path)
+            suffix = path.suffix.lower()
+            legacy_mime = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}.get(suffix, "application/octet-stream")
+            return Response(
+                content=path.read_bytes(),
+                media_type=legacy_mime,
+                headers={"Cache-Control": "private, max-age=300", "X-Content-Type-Options": "nosniff"},
+            )
+
+        raise HTTPException(
+            status_code=404,
+            detail="The original image is not available for this older report. Images submitted after persistent image storage was deployed will be retained.",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print("REPORT IMAGE ERROR:", repr(exc), flush=True)
+        raise HTTPException(status_code=500, detail="Could not retrieve report image.") from exc
 
 
 # --------------------------------------------------
@@ -1349,6 +1411,14 @@ async def submit_report(
 
             ensure_columns(conn)
 
+            # Persist the original upload in PostgreSQL so it survives Render restarts.
+            conn.execute("""
+                UPDATE road_reports
+                SET image_data = %s,
+                    image_mime_type = %s
+                WHERE reference_code::text = %s
+            """, (content, file.content_type, str(report["reference_code"])))
+
             conn.execute("""
                 UPDATE road_reports
                 SET
@@ -1512,7 +1582,9 @@ def list_reports(
                     nearby_facility_distance_m,
                     nearby_facility_osm_url,
                     context_source,
-                    context_retrieved_at
+                    context_retrieved_at,
+                    (image_data IS NOT NULL) AS has_image,
+                    image_path
                 FROM road_reports
                 ORDER BY submitted_at DESC
                 LIMIT 100
@@ -1560,6 +1632,11 @@ def list_reports(
                 "context_retrieved_at": (
                     row[32].isoformat()
                     if row[32] else None
+                ),
+                "image_url": (
+                    f"/api/track/{str(row[1])}/image"
+                    if row[33] or (row[34] and Path(row[34]).is_file())
+                    else None
                 ),
             })
 
