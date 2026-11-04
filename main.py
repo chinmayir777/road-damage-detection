@@ -240,45 +240,113 @@ def _nominatim_request(params):
 
         raise
 def geocode_address(address):
-    """Convert a user-entered address/landmark into coordinates."""
+    """Convert an address into coordinates using Photon first."""
+
     query = (address or "").strip()
+
     if len(query) < 3:
-        raise HTTPException(status_code=400, detail="Enter a more complete address or landmark.")
+        raise HTTPException(
+            status_code=400,
+            detail="Enter a more complete address or landmark."
+        )
 
     if not hasattr(geocode_address, "cache"):
         geocode_address.cache = {}
+
     key = query.casefold()
+
     if key in geocode_address.cache:
         return dict(geocode_address.cache[key])
 
+    # 1. Photon lookup first (avoids depending on Nominatim limits)
+    try:
+        payload = _photon_lookup({
+            "q": query,
+            "limit": 1,
+            "lang": "en"
+        })
+
+        features = payload.get("features") or []
+
+        if features:
+            feature = features[0]
+            coordinates = (
+                feature.get("geometry") or {}
+            ).get("coordinates") or []
+
+            if len(coordinates) >= 2:
+                props = feature.get("properties") or {}
+
+                parts = [
+                    props.get("name"),
+                    props.get("district"),
+                    props.get("city"),
+                    props.get("state"),
+                    props.get("country")
+                ]
+
+                display_name = ", ".join(
+                    dict.fromkeys(
+                        str(part).strip()
+                        for part in parts
+                        if part and str(part).strip()
+                    )
+                )
+
+                result = {
+                    "latitude": float(coordinates[1]),
+                    "longitude": float(coordinates[0]),
+                    "display_name": display_name or query,
+                    "source": "Photon OpenStreetMap"
+                }
+
+                geocode_address.cache[key] = dict(result)
+                return result
+
+    except Exception as exc:
+        print(
+            "[GEOCODE] Photon lookup failed:",
+            repr(exc),
+            flush=True
+        )
+
+    # 2. Nominatim fallback
     try:
         results = _nominatim_request({
             "_endpoint": "search",
             "q": query,
             "format": "jsonv2",
             "limit": 1,
-            "addressdetails": 1,
-            "extratags": 1,
+            "addressdetails": 1
         })
-        if not results:
-            raise HTTPException(status_code=404, detail="Address not found. Try adding the area, city, or a nearby landmark.")
 
-        item = results[0]
-        result = {
-            "latitude": float(item["lat"]),
-            "longitude": float(item["lon"]),
-            "display_name": item.get("display_name") or query,
-            "source": "OpenStreetMap Nominatim",
-        }
-        geocode_address.cache[key] = dict(result)
-        return result
-    except HTTPException:
-        raise
+        if results:
+            item = results[0]
+
+            result = {
+                "latitude": float(item["lat"]),
+                "longitude": float(item["lon"]),
+                "display_name": item.get("display_name") or query,
+                "source": "OpenStreetMap Nominatim"
+            }
+
+            geocode_address.cache[key] = dict(result)
+            return result
+
     except Exception as exc:
-        print("[ROAD-GEOCODE] Lookup failed:", repr(exc), flush=True)
-        raise HTTPException(status_code=502, detail="Address lookup is temporarily unavailable. Use current GPS or try again.") from exc
+        print(
+            "[GEOCODE] Nominatim fallback failed:",
+            repr(exc),
+            flush=True
+        )
 
-
+    raise HTTPException(
+        status_code=503,
+        detail=(
+            "Address lookup is temporarily unavailable. "
+            "Please use GPS coordinates or try again later."
+        )
+    )
 def _overpass_road_context(latitude, longitude):
     """
     Retrieve mapped road ways and nearby facilities from OpenStreetMap.
