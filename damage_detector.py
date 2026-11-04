@@ -9,8 +9,9 @@ MODEL_PATH = Path(__file__).resolve().parent / "best.onnx"
 
 INPUT_SIZE = 640
 
-# Non-Maximum Suppression threshold
+# Non-Maximum Suppression thresholds
 IOU_THRESHOLD = 0.35
+CROSS_CLASS_IOU_THRESHOLD = 0.50
 
 CLASS_NAMES = {
     0: "D00_Longitudinal_crack",
@@ -19,12 +20,12 @@ CLASS_NAMES = {
     3: "D40_Pothole",
 }
 
-# Increased confidence thresholds to reduce false detections
+# Retain conservative thresholds to reduce false detections
 CLASS_THRESHOLDS = {
     0: 0.20,
     1: 0.20,
     2: 0.20,
-    3: 0.30,  # Pothole: increased from 0.05
+    3: 0.30,
 }
 
 MAX_DETECTIONS_PER_CLASS = 20
@@ -53,6 +54,66 @@ def get_model():
         )
 
     return _session
+
+
+def calculate_iou(box1, box2):
+    x1 = max(box1[0], box2[0])
+    y1 = max(box1[1], box2[1])
+    x2 = min(box1[2], box2[2])
+    y2 = min(box1[3], box2[3])
+
+    intersection = (
+        max(0, x2 - x1) *
+        max(0, y2 - y1)
+    )
+
+    area1 = (
+        max(0, box1[2] - box1[0]) *
+        max(0, box1[3] - box1[1])
+    )
+
+    area2 = (
+        max(0, box2[2] - box2[0]) *
+        max(0, box2[3] - box2[1])
+    )
+
+    union = area1 + area2 - intersection
+
+    return intersection / union if union > 0 else 0.0
+
+
+def suppress_cross_class_duplicates(detections):
+    """
+    Remove highly overlapping predictions of the same physical region.
+    Keep the highest-confidence prediction.
+    """
+
+    ordered = sorted(
+        detections,
+        key=lambda item: item["confidence"],
+        reverse=True,
+    )
+
+    kept = []
+
+    for detection in ordered:
+        box = detection["bbox_xyxy"]
+
+        duplicate = False
+
+        for existing in kept:
+            existing_box = existing["bbox_xyxy"]
+
+            overlap = calculate_iou(box, existing_box)
+
+            if overlap >= CROSS_CLASS_IOU_THRESHOLD:
+                duplicate = True
+                break
+
+        if not duplicate:
+            kept.append(detection)
+
+    return kept
 
 
 def detect_damage(image_path):
@@ -123,9 +184,13 @@ def detect_damage(image_path):
 
     predictions = output[0].T
 
+    if predictions.shape[1] != 8:
+        raise ValueError(
+            f"Unexpected YOLO output shape: {predictions.shape}"
+        )
+
     raw_scores = predictions[:, 4:8]
 
-    # Debug information
     print(
         "[YOLO-DEBUG]",
         {
@@ -135,9 +200,6 @@ def detect_damage(image_path):
                 round(float(np.max(raw_scores)), 4)
                 if raw_scores.size else None
             ),
-            "pothole_candidates_above_010": int(
-                np.sum(raw_scores[:, 3] >= 0.10)
-            ),
             "pothole_candidates_above_030": int(
                 np.sum(raw_scores[:, 3] >= 0.30)
             ),
@@ -145,13 +207,12 @@ def detect_damage(image_path):
         flush=True,
     )
 
-    # Separate candidates by damage class
     class_candidates = {
         class_id: []
         for class_id in CLASS_NAMES
     }
 
-    # Process model predictions
+    # Process predictions
     for row in predictions:
 
         cx, cy, w, h = map(float, row[:4])
@@ -159,24 +220,19 @@ def detect_damage(image_path):
         if w <= 0 or h <= 0:
             continue
 
-        # Process each class independently
         for class_id in CLASS_NAMES:
 
             confidence = float(row[4 + class_id])
 
-            threshold = CLASS_THRESHOLDS[class_id]
-
-            if confidence < threshold:
+            if confidence < CLASS_THRESHOLDS[class_id]:
                 continue
 
-            # Convert center coordinates to original image coordinates
             x1 = (cx - w / 2 - left) / scale
             y1 = (cy - h / 2 - top) / scale
 
             x2 = (cx + w / 2 - left) / scale
             y2 = (cy + h / 2 - top) / scale
 
-            # Clip coordinates
             x1 = int(np.clip(x1, 0, original_w - 1))
             y1 = int(np.clip(y1, 0, original_h - 1))
 
@@ -200,13 +256,12 @@ def detect_damage(image_path):
 
     detections = []
 
-    # Class-wise Non-Maximum Suppression
+    # Class-wise NMS
     for class_id, candidates in class_candidates.items():
 
         if not candidates:
             continue
 
-        # Sort by confidence
         candidates.sort(
             key=lambda item: item["confidence"],
             reverse=True,
@@ -222,13 +277,10 @@ def detect_damage(image_path):
             for item in candidates
         ]
 
-        threshold = CLASS_THRESHOLDS[class_id]
-
-        # Suppress overlapping detections
         kept = cv2.dnn.NMSBoxes(
             boxes,
             scores,
-            threshold,
+            CLASS_THRESHOLDS[class_id],
             IOU_THRESHOLD,
         )
 
@@ -238,7 +290,6 @@ def detect_damage(image_path):
             else []
         )
 
-        # Limit detections per class
         kept = kept[:MAX_DETECTIONS_PER_CLASS]
 
         for index in kept:
@@ -251,22 +302,14 @@ def detect_damage(image_path):
 
             detections.append({
                 "class_id": class_id,
-
                 "damage_type": damage_type,
-
                 "candidate_type": damage_type,
-
                 "classification_status": (
                     "Needs human verification"
                     if confidence < 0.45
                     else "Model prediction"
                 ),
-
-                "confidence": round(
-                    confidence,
-                    4,
-                ),
-
+                "confidence": round(confidence, 4),
                 "bbox_xyxy": [
                     x,
                     y,
@@ -274,6 +317,11 @@ def detect_damage(image_path):
                     y + box_h,
                 ],
             })
+
+    # Remove highly overlapping predictions across classes
+    before_suppression = len(detections)
+
+    detections = suppress_cross_class_duplicates(detections)
 
     # Sort by confidence
     detections.sort(
@@ -284,6 +332,8 @@ def detect_damage(image_path):
     print(
         "[YOLO-RESULT]",
         {
+            "before_duplicate_suppression": before_suppression,
+            "after_duplicate_suppression": len(detections),
             "total_detections": len(detections),
             "potholes": sum(
                 1 for d in detections
