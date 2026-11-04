@@ -804,7 +804,11 @@ def assess_severity(detections, features):
     return "Minor"
 
 def confidence_uncertainty(detections):
-    """Require manual inspection only when AI uncertainty is High."""
+    """
+    Classify AI uncertainty.
+    Manual inspection is required only for High uncertainty.
+    """
+
     if not detections:
         return (None, "High", True, "Human verification")
 
@@ -812,27 +816,34 @@ def confidence_uncertainty(detections):
         max(0.0, min(1.0, float(d.get("confidence", 0) or 0)))
         for d in detections
     ]
-    mean_confidence = sum(values) / len(values)
-    low_fraction = sum(value < 0.40 for value in values) / len(values)
 
-    if mean_confidence < 0.40 or low_fraction >= 0.5:
+    mean_confidence = sum(values) / len(values)
+
+    # Uncertainty classification
+    if mean_confidence < 0.15:
         uncertainty = "High"
-    elif mean_confidence < 0.65:
+
+    elif mean_confidence < 0.45:
         uncertainty = "Medium"
+
     else:
         uncertainty = "Low"
 
-    # Medium and Low uncertainty continue through automatic prioritization.
+    # Manual inspection only for High uncertainty
     verification_required = uncertainty == "High"
-    route = "Human verification" if verification_required else "Automatic candidate"
+
+    decision_route = (
+        "Human verification"
+        if verification_required
+        else "Automatic candidate"
+    )
 
     return (
         round(mean_confidence, 4),
         uncertainty,
         verification_required,
-        route,
+        decision_route,
     )
-
 
 
 # --------------------------------------------------
