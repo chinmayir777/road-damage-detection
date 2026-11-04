@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import math
 import os
 import shutil
 import tempfile
@@ -260,81 +261,214 @@ def geocode_address(address):
         raise HTTPException(status_code=502, detail="Address lookup is temporarily unavailable. Use current GPS or try again.") from exc
 
 
+def _overpass_road_context(latitude, longitude):
+    """
+    Retrieve the nearest mapped road and nearby mapped POIs from OpenStreetMap.
+    This does not provide live traffic volume.
+    """
+    query = f"""
+    [out:json][timeout:12];
+    (
+      way(around:180,{latitude},{longitude})["highway"];
+      nwr(around:250,{latitude},{longitude})["amenity"~"school|hospital|clinic|bus_station|bus_stop|parking"];
+    );
+    out tags center;
+    """
+    url = "https://overpass-api.de/api/interpreter?" + urllib.parse.urlencode(
+        {"data": query}
+    )
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "RoadWatch/1.0 (contact: chinmayir777@gmail.com)",
+            "Accept": "application/json",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=18) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return payload.get("elements", [])
+
+
 def retrieve_road_context(latitude, longitude):
-    """Retrieve mapped road/address attributes; never fabricate traffic volume."""
+    """
+    Retrieve road classification and nearby mapped facilities.
+    Traffic remains explicitly unavailable because OSM map data is not a
+    live traffic feed. Missing display values use readable labels.
+    """
+    latitude = float(latitude)
+    longitude = float(longitude)
+
     result = {
-        "road_name": None,
-        "road_class": None,
-        "road_importance": None,
-        "location_type": None,
-        "traffic_level": None,
-        "context_source": None,
-        "context_status": "Context lookup failed; retry required",
+        "road_name": "Not available",
+        "road_class": "Not available",
+        "road_importance": "Unknown",
+        "location_type": "General",
+        "traffic_level": "Unavailable",
+        "context_source": "OpenStreetMap",
+        "context_status": "Road context lookup pending",
     }
 
-    key = (round(float(latitude), 5), round(float(longitude), 5))
+    key = (round(latitude, 5), round(longitude, 5))
     if not hasattr(retrieve_road_context, "cache"):
         retrieve_road_context.cache = {}
     if key in retrieve_road_context.cache:
         return dict(retrieve_road_context.cache[key])
 
+    road_classes = {
+        "motorway", "motorway_link", "trunk", "trunk_link",
+        "primary", "primary_link", "secondary", "secondary_link",
+        "tertiary", "tertiary_link", "unclassified", "residential",
+        "living_street", "service", "road",
+    }
+
     try:
-        data = _nominatim_request({
-            "_endpoint": "reverse",
-            "format": "jsonv2",
-            "lat": float(latitude),
-            "lon": float(longitude),
-            "zoom": 18,
-            "addressdetails": 1,
-            "extratags": 1,
-        })
-        address = data.get("address") or {}
-        tags = data.get("extratags") or {}
+        # Nominatim is useful for the human-readable road/address name,
+        # but its nearest object may be a bus stop or another point feature.
+        try:
+            data = _nominatim_request({
+                "_endpoint": "reverse",
+                "format": "jsonv2",
+                "lat": latitude,
+                "lon": longitude,
+                "zoom": 18,
+                "addressdetails": 1,
+                "extratags": 1,
+            })
+            address = data.get("address") or {}
+            road_name = (
+                address.get("road")
+                or address.get("pedestrian")
+                or address.get("residential")
+                or address.get("path")
+                or address.get("footway")
+                or address.get("cycleway")
+            )
+            if road_name:
+                result["road_name"] = road_name
+        except Exception as exc:
+            print("[ROAD-CONTEXT] Nominatim reverse lookup failed:", repr(exc), flush=True)
 
-        result["road_name"] = (
-            address.get("road") or address.get("pedestrian")
-            or address.get("residential") or address.get("path")
-            or address.get("footway") or address.get("cycleway")
-        )
+        # Use actual highway ways for road class; do not mistake
+        # highway=bus_stop on a point feature for a road classification.
+        elements = []
+        try:
+            elements = _overpass_road_context(latitude, longitude)
+        except Exception as exc:
+            print("[ROAD-CONTEXT] Overpass lookup failed:", repr(exc), flush=True)
 
-        # Reverse results may expose highway as an extra tag or result type.
-        road_class = tags.get("highway")
-        if not road_class and data.get("category") == "highway":
-            road_class = data.get("type")
-        result["road_class"] = road_class
+        road_candidates = []
+        nearby_pois = []
 
-        # These are broad map-class proxies, not measured risk or traffic.
-        if road_class in {"motorway", "trunk", "primary"}:
+        for element in elements:
+            tags = element.get("tags") or {}
+            highway = tags.get("highway")
+
+            if element.get("type") == "way" and highway in road_classes:
+                center = element.get("center") or {}
+                road_lat = center.get("lat")
+                road_lon = center.get("lon")
+
+                # Prefer named roads; among those, choose the closest mapped way.
+                if road_lat is not None and road_lon is not None:
+                    distance = (
+                        (float(road_lat) - latitude) ** 2
+                        + ((float(road_lon) - longitude)
+                           * max(0.01, abs(math.cos(math.radians(latitude))))) ** 2
+                    )
+                else:
+                    distance = 999999
+
+                road_candidates.append((
+                    0 if tags.get("name") else 1,
+                    distance,
+                    tags.get("name"),
+                    highway,
+                ))
+
+            amenity = tags.get("amenity")
+            if amenity in {
+                "school", "hospital", "clinic",
+                "bus_station", "bus_stop", "parking",
+            }:
+                center = element.get("center") or {}
+                poi_lat = element.get("lat", center.get("lat"))
+                poi_lon = element.get("lon", center.get("lon"))
+                if poi_lat is not None and poi_lon is not None:
+                    distance = (
+                        (float(poi_lat) - latitude) ** 2
+                        + ((float(poi_lon) - longitude)
+                           * max(0.01, abs(math.cos(math.radians(latitude))))) ** 2
+                    )
+                    nearby_pois.append((distance, amenity))
+
+        if road_candidates:
+            road_candidates.sort(key=lambda item: (item[0], item[1]))
+            _, _, mapped_name, road_class = road_candidates[0]
+            if mapped_name:
+                result["road_name"] = mapped_name
+            result["road_class"] = road_class
+
+        if result["road_class"] == "Not available":
+            result["road_importance"] = "Unknown"
+        elif result["road_class"] in {
+            "motorway", "motorway_link", "trunk", "trunk_link",
+            "primary", "primary_link",
+        }:
             result["road_importance"] = "Major"
-        elif road_class in {"secondary", "tertiary"}:
+        elif result["road_class"] in {
+            "secondary", "secondary_link", "tertiary", "tertiary_link",
+        }:
             result["road_importance"] = "Collector"
-        elif road_class in {"residential", "living_street", "service", "unclassified"}:
+        else:
             result["road_importance"] = "Local"
 
-        # Use an explicit mapped amenity if present; don't infer proximity.
-        amenity = tags.get("amenity") or address.get("amenity")
-        if amenity in {"school", "hospital", "clinic"}:
-            result["location_type"] = "School/Hospital"
-        elif amenity in {"bus_station", "bus_stop", "parking"}:
-            result["location_type"] = "Junction/Transit"
+        if nearby_pois:
+            nearby_pois.sort(key=lambda item: item[0])
+            nearest_amenity = nearby_pois[0][1]
+            if nearest_amenity in {"school", "hospital", "clinic"}:
+                result["location_type"] = "School/Hospital"
+            else:
+                result["location_type"] = "Junction/Transit"
+        else:
+            result["location_type"] = "General"
 
-        result["context_source"] = "OpenStreetMap Nominatim"
-        result["context_status"] = (
-            "Road details retrieved; traffic data unavailable"
-            if result["road_name"] or result["road_class"]
-            else "Map provider returned no road details for these coordinates"
+        # OpenStreetMap does not provide live traffic volume/speed here.
+        result["traffic_level"] = "Unavailable"
+        result["context_source"] = (
+            "OpenStreetMap Nominatim + Overpass API"
+            if elements else "OpenStreetMap Nominatim"
         )
+
+        if result["road_name"] != "Not available" or result["road_class"] != "Not available":
+            result["context_status"] = (
+                "Road details retrieved; nearby mapped facilities checked; "
+                "live traffic data unavailable"
+            )
+        else:
+            result["context_status"] = (
+                "Road details not found in map data; "
+                "live traffic data unavailable"
+            )
+
         retrieve_road_context.cache[key] = dict(result)
 
         print("[ROAD-CONTEXT] " + json.dumps({
             "coordinates": key,
             "road_name": result["road_name"],
             "road_class": result["road_class"],
+            "road_importance": result["road_importance"],
+            "location_type": result["location_type"],
+            "traffic_level": result["traffic_level"],
             "status": result["context_status"],
         }), flush=True)
+
     except Exception as exc:
         print("[ROAD-CONTEXT] Lookup failed:", repr(exc), flush=True)
+        result["context_status"] = (
+            "Map lookup unavailable; traffic data unavailable"
+        )
 
+    retrieve_road_context.cache[key] = dict(result)
     return result
 
 
@@ -1345,6 +1479,66 @@ def refresh_report_context(
 # --------------------------------------------------
 # AUTHORITY MAINTENANCE STATUS UPDATE
 # --------------------------------------------------
+
+class TrafficUpdate(BaseModel):
+    traffic_level: str
+
+
+@app.patch("/api/reports/{report_id}/traffic")
+def update_traffic_level(
+    report_id: int,
+    update: TrafficUpdate,
+    x_authority_pin: str | None = Header(default=None),
+):
+    """Save an authority-assessed traffic level for a reported location."""
+    require_authority_pin(x_authority_pin)
+
+    if update.traffic_level not in {"High", "Medium", "Low"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Traffic level must be High, Medium, or Low.",
+        )
+
+    try:
+        with psycopg.connect(db_url(), connect_timeout=10) as conn:
+            ensure_columns(conn)
+
+            found = conn.execute("""
+                UPDATE road_reports
+                SET traffic_level = %s,
+                    context_status = CASE
+                        WHEN context_status IS NULL OR context_status = ''
+                        THEN 'Traffic level assessed by authority'
+                        ELSE context_status || '; traffic level assessed by authority'
+                    END
+                WHERE report_id = %s
+                RETURNING report_id
+            """, (update.traffic_level, report_id)).fetchone()
+
+            if not found:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Report not found.",
+                )
+
+            # Recalculate TOPSIS-style scores using the newly assigned traffic.
+            refresh_priorities(conn)
+
+        return {
+            "message": "Authority-assessed traffic level saved.",
+            "report_id": report_id,
+            "traffic_level": update.traffic_level,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print("[TRAFFIC] Update failed:", repr(exc), flush=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Could not save traffic level.",
+        ) from exc
+
 
 class StatusUpdate(BaseModel):
     report_status: str
