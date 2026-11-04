@@ -6,7 +6,7 @@ import numpy as np
 import onnxruntime as ort
 
 MODEL_PATH = Path(__file__).resolve().parent / "best.onnx"
-CONFIDENCE_THRESHOLD = 0.40
+CONFIDENCE_THRESHOLD = 0.10
 IOU_THRESHOLD = 0.45
 INPUT_SIZE = 640
 
