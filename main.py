@@ -240,113 +240,79 @@ def _nominatim_request(params):
 
         raise
 def geocode_address(address):
-    """Convert an address into coordinates using Photon first."""
-
+    """Convert an address into coordinates using Photon first, Nominatim second."""
     query = (address or "").strip()
-
     if len(query) < 3:
         raise HTTPException(
             status_code=400,
-            detail="Enter a more complete address or landmark."
+            detail="Enter a more complete address or landmark.",
         )
 
     if not hasattr(geocode_address, "cache"):
         geocode_address.cache = {}
-
     key = query.casefold()
-
     if key in geocode_address.cache:
         return dict(geocode_address.cache[key])
 
-    # 1. Photon lookup first (avoids depending on Nominatim limits)
+    # Photon first: avoids making every address lookup depend on Nominatim.
     try:
-        payload = _photon_lookup({
-            "q": query,
-            "limit": 1,
-            "lang": "en"
-        })
-
+        payload = _photon_lookup({"q": query, "limit": 1, "lang": "en"}, timeout=4)
         features = payload.get("features") or []
-
         if features:
             feature = features[0]
-            coordinates = (
-                feature.get("geometry") or {}
-            ).get("coordinates") or []
-
+            coordinates = (feature.get("geometry") or {}).get("coordinates") or []
             if len(coordinates) >= 2:
                 props = feature.get("properties") or {}
-
                 parts = [
                     props.get("name"),
                     props.get("district"),
                     props.get("city"),
                     props.get("state"),
-                    props.get("country")
+                    props.get("country"),
                 ]
-
-                display_name = ", ".join(
-                    dict.fromkeys(
-                        str(part).strip()
-                        for part in parts
-                        if part and str(part).strip()
-                    )
-                )
-
+                display_name = ", ".join(dict.fromkeys(
+                    str(part).strip() for part in parts
+                    if part and str(part).strip()
+                ))
                 result = {
                     "latitude": float(coordinates[1]),
                     "longitude": float(coordinates[0]),
                     "display_name": display_name or query,
-                    "source": "Photon OpenStreetMap"
+                    "source": "Photon OpenStreetMap",
                 }
-
                 geocode_address.cache[key] = dict(result)
                 return result
-
     except Exception as exc:
-        print(
-            "[GEOCODE] Photon lookup failed:",
-            repr(exc),
-            flush=True
-        )
+        print("[ROAD-GEOCODE] Photon lookup failed:", repr(exc), flush=True)
 
-    # 2. Nominatim fallback
+    # Nominatim fallback only when Photon has no usable result.
     try:
         results = _nominatim_request({
             "_endpoint": "search",
             "q": query,
             "format": "jsonv2",
             "limit": 1,
-            "addressdetails": 1
+            "addressdetails": 1,
         })
-
         if results:
             item = results[0]
-
             result = {
                 "latitude": float(item["lat"]),
                 "longitude": float(item["lon"]),
                 "display_name": item.get("display_name") or query,
-                "source": "OpenStreetMap Nominatim"
+                "source": "OpenStreetMap Nominatim",
             }
-
             geocode_address.cache[key] = dict(result)
             return result
-
     except Exception as exc:
-        print(
-            "[GEOCODE] Nominatim fallback failed:",
-            repr(exc),
-            flush=True
-        )
+        print("[ROAD-GEOCODE] Nominatim fallback failed:", repr(exc), flush=True)
 
     raise HTTPException(
         status_code=503,
-        detail=(
-            "Address lookup is temporarily unavailable. "
-            "Please use GPS coordinates or try again later."
-        )
+        detail="Address lookup is temporarily unavailable. Please use GPS coordinates or try again later.",
     )
+
+
 def _overpass_road_context(latitude, longitude):
     """
     Retrieve mapped road ways and nearby facilities from OpenStreetMap.
@@ -578,37 +544,8 @@ def retrieve_road_context(latitude, longitude):
             errors.append("Nominatim road search")
             print("[ROAD-CONTEXT] Nominatim road search failed:", repr(exc), flush=True)
 
-    # 4. Skip Overpass because its public servers are unreliable.
-# Photon is used for road and nearby facility information.
-     elements = []
-
-    for element in elements:
-        tags = element.get("tags") or {}
-        center = element.get("center") or {}
-        lat = element.get("lat", center.get("lat"))
-        lon = element.get("lon", center.get("lon"))
-        name = str(tags.get("name") or "").strip()
-        if lat is None or lon is None or not name:
-            continue
-        props = {
-            "osm_key": next((k for k in ("amenity", "highway", "railway", "public_transport") if tags.get(k)), ""),
-            "osm_value": next((tags.get(k) for k in ("amenity", "highway", "railway", "public_transport") if tags.get(k)), ""),
-            "osm_type": str(element.get("type") or "").upper(),
-            "osm_id": element.get("id"),
-            "name": name,
-        }
-        facility_category, location_group = classify_facility(props)
-        if facility_category:
-            kind = {"N": "node", "W": "way", "R": "relation"}.get(props["osm_type"])
-            osm_url = f"https://www.openstreetmap.org/{kind}/{props['osm_id']}" if kind and props["osm_id"] else None
-            facility_candidates.append({
-                "distance": distance_m(lat, lon),
-                "name": name,
-                "category": facility_category,
-                "location_group": location_group,
-                "osm_url": osm_url,
-                "source": "Overpass",
-            })
+    # 4. Skip slow/unreliable Overpass requests; Photon supplies facility data.
+    elements = []
 
     # 5. Photon reverse lookup with OSM tag filters: request named nearby
     # facilities by category, rather than relying on broad text search ranking.
