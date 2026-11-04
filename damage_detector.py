@@ -148,9 +148,22 @@ def detect_damage(image_path):
     for i in kept[:50]:
         x, y, w, h = boxes[i]
 
+        candidate_type = CLASS_NAMES[class_ids[i]]
+        is_uncertain = scores[i] < 0.25
+
         detections.append({
             "class_id": class_ids[i],
-            "damage_type": CLASS_NAMES[class_ids[i]],
+            "damage_type": (
+                "Unconfirmed damage"
+                if is_uncertain
+                else candidate_type
+            ),
+            "candidate_type": candidate_type,
+            "classification_status": (
+                "Needs human verification"
+                if is_uncertain
+                else "Model prediction"
+            ),
             "confidence": round(scores[i], 4),
             "bbox_xyxy": [x, y, x + w, y + h],
         })
