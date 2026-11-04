@@ -1,4 +1,3 @@
-
 from pathlib import Path
 
 import cv2
@@ -8,9 +7,10 @@ import onnxruntime as ort
 
 MODEL_PATH = Path(__file__).resolve().parent / "best.onnx"
 
-CONFIDENCE_THRESHOLD = 0.10
-IOU_THRESHOLD = 0.45
 INPUT_SIZE = 640
+
+# Non-Maximum Suppression threshold
+IOU_THRESHOLD = 0.35
 
 CLASS_NAMES = {
     0: "D00_Longitudinal_crack",
@@ -19,13 +19,15 @@ CLASS_NAMES = {
     3: "D40_Pothole",
 }
 
-# Separate confidence thresholds for each damage class
+# Increased confidence thresholds to reduce false detections
 CLASS_THRESHOLDS = {
-    0: 0.10,
-    1: 0.10,
-    2: 0.10,
-    3: 0.05,  # Pothole
+    0: 0.20,
+    1: 0.20,
+    2: 0.20,
+    3: 0.30,  # Pothole: increased from 0.05
 }
+
+MAX_DETECTIONS_PER_CLASS = 20
 
 _session = None
 
@@ -54,6 +56,7 @@ def get_model():
 
 
 def detect_damage(image_path):
+
     session = get_model()
 
     image = cv2.imread(str(image_path))
@@ -63,7 +66,7 @@ def detect_damage(image_path):
 
     original_h, original_w = image.shape[:2]
 
-    # Resize image while maintaining aspect ratio
+    # Resize while maintaining aspect ratio
     scale = min(
         INPUT_SIZE / original_w,
         INPUT_SIZE / original_h,
@@ -72,9 +75,13 @@ def detect_damage(image_path):
     new_w = max(1, int(round(original_w * scale)))
     new_h = max(1, int(round(original_h * scale)))
 
-    resized = cv2.resize(image, (new_w, new_h))
+    resized = cv2.resize(
+        image,
+        (new_w, new_h),
+        interpolation=cv2.INTER_LINEAR,
+    )
 
-    # Add padding to create a 640 x 640 image
+    # Letterbox padding
     pad_w = INPUT_SIZE - new_w
     pad_h = INPUT_SIZE - new_h
 
@@ -92,14 +99,21 @@ def detect_damage(image_path):
         left:left + new_w
     ] = resized
 
-    # Convert BGR to RGB
-    rgb = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+    # BGR to RGB
+    rgb = cv2.cvtColor(
+        canvas,
+        cv2.COLOR_BGR2RGB,
+    )
 
-    # Normalize and convert to NCHW format
+    # Normalize and convert to NCHW
     tensor = rgb.astype(np.float32) / 255.0
-    tensor = np.transpose(tensor, (2, 0, 1))[None, ...]
 
-    # Run ONNX inference
+    tensor = np.transpose(
+        tensor,
+        (2, 0, 1),
+    )[None, ...]
+
+    # ONNX inference
     output = session.run(
         None,
         {
@@ -121,44 +135,51 @@ def detect_damage(image_path):
                 round(float(np.max(raw_scores)), 4)
                 if raw_scores.size else None
             ),
-            "pothole_candidates_above_005": int(
-                np.sum(raw_scores[:, 3] >= 0.05)
-            ),
             "pothole_candidates_above_010": int(
                 np.sum(raw_scores[:, 3] >= 0.10)
+            ),
+            "pothole_candidates_above_030": int(
+                np.sum(raw_scores[:, 3] >= 0.30)
             ),
         },
         flush=True,
     )
 
-    # Store candidates separately for each class
+    # Separate candidates by damage class
     class_candidates = {
         class_id: []
         for class_id in CLASS_NAMES
     }
 
-    # Process predictions
+    # Process model predictions
     for row in predictions:
 
-        cx, cy, w, h = row[:4]
+        cx, cy, w, h = map(float, row[:4])
 
-        # Check each class independently
+        if w <= 0 or h <= 0:
+            continue
+
+        # Process each class independently
         for class_id in CLASS_NAMES:
 
             confidence = float(row[4 + class_id])
 
-            if confidence < CLASS_THRESHOLDS[class_id]:
+            threshold = CLASS_THRESHOLDS[class_id]
+
+            if confidence < threshold:
                 continue
 
-            # Convert center coordinates to corner coordinates
+            # Convert center coordinates to original image coordinates
             x1 = (cx - w / 2 - left) / scale
             y1 = (cy - h / 2 - top) / scale
+
             x2 = (cx + w / 2 - left) / scale
             y2 = (cy + h / 2 - top) / scale
 
-            # Clip coordinates to original image dimensions
+            # Clip coordinates
             x1 = int(np.clip(x1, 0, original_w - 1))
             y1 = int(np.clip(y1, 0, original_h - 1))
+
             x2 = int(np.clip(x2, 0, original_w - 1))
             y2 = int(np.clip(y2, 0, original_h - 1))
 
@@ -179,11 +200,17 @@ def detect_damage(image_path):
 
     detections = []
 
-    # Apply Non-Maximum Suppression separately for each class
+    # Class-wise Non-Maximum Suppression
     for class_id, candidates in class_candidates.items():
 
         if not candidates:
             continue
+
+        # Sort by confidence
+        candidates.sort(
+            key=lambda item: item["confidence"],
+            reverse=True,
+        )
 
         boxes = [
             item["box"]
@@ -195,10 +222,13 @@ def detect_damage(image_path):
             for item in candidates
         ]
 
+        threshold = CLASS_THRESHOLDS[class_id]
+
+        # Suppress overlapping detections
         kept = cv2.dnn.NMSBoxes(
             boxes,
             scores,
-            CLASS_THRESHOLDS[class_id],
+            threshold,
             IOU_THRESHOLD,
         )
 
@@ -208,23 +238,35 @@ def detect_damage(image_path):
             else []
         )
 
+        # Limit detections per class
+        kept = kept[:MAX_DETECTIONS_PER_CLASS]
+
         for index in kept:
 
             x, y, box_w, box_h = boxes[index]
+
             confidence = scores[index]
 
             damage_type = CLASS_NAMES[class_id]
 
             detections.append({
                 "class_id": class_id,
+
                 "damage_type": damage_type,
+
                 "candidate_type": damage_type,
+
                 "classification_status": (
                     "Needs human verification"
-                    if confidence < 0.25
+                    if confidence < 0.45
                     else "Model prediction"
                 ),
-                "confidence": round(confidence, 4),
+
+                "confidence": round(
+                    confidence,
+                    4,
+                ),
+
                 "bbox_xyxy": [
                     x,
                     y,
@@ -233,14 +275,27 @@ def detect_damage(image_path):
                 ],
             })
 
-    # Sort detections by confidence
+    # Sort by confidence
     detections.sort(
         key=lambda item: item["confidence"],
         reverse=True,
     )
 
-    # Limit maximum detections
-    detections = detections[:50]
+    print(
+        "[YOLO-RESULT]",
+        {
+            "total_detections": len(detections),
+            "potholes": sum(
+                1 for d in detections
+                if d["class_id"] == 3
+            ),
+            "cracks": sum(
+                1 for d in detections
+                if d["class_id"] != 3
+            ),
+        },
+        flush=True,
+    )
 
     return {
         "image": Path(image_path).name,
