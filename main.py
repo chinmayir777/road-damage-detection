@@ -343,13 +343,7 @@ def retrieve_road_context(latitude, longitude):
 # --------------------------------------------------
 
 def extract_features(detections):
-    """
-    Calculate approximate bounding-box features.
-
-    Note: full original image dimensions are not available here.
-    These features are proxies, not physical measurements.
-    """
-
+    """Calculate approximate damage features after suppressing duplicate boxes."""
     if not detections:
         return {
             "damage_size_ratio": 0.0,
@@ -357,125 +351,127 @@ def extract_features(detections):
             "damage_density": 0.0,
         }
 
-    boxes = [
-        detection.get("bbox_xyxy") or []
-        for detection in detections
-    ]
+    candidates = []
+    for detection in detections:
+        box = detection.get("bbox_xyxy") or []
+        if len(box) != 4:
+            continue
+        x1, y1, x2, y2 = map(float, box)
+        if x2 <= x1 or y2 <= y1:
+            continue
+        candidates.append({
+            "box": [x1, y1, x2, y2],
+            "confidence": float(detection.get("confidence", 0) or 0),
+        })
 
-    valid_boxes = [
-        box for box in boxes
-        if len(box) == 4
-    ]
+    candidates.sort(key=lambda item: item["confidence"], reverse=True)
+    unique = []
 
-    if not valid_boxes:
+    for item in candidates:
+        x1, y1, x2, y2 = item["box"]
+        duplicate = False
+        for kept in unique:
+            a1, b1, a2, b2 = kept["box"]
+            ix1, iy1 = max(x1, a1), max(y1, b1)
+            ix2, iy2 = min(x2, a2), min(y2, b2)
+            intersection = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+            area1 = (x2 - x1) * (y2 - y1)
+            area2 = (a2 - a1) * (b2 - b1)
+            union = area1 + area2 - intersection
+            if union > 0 and intersection / union >= 0.50:
+                duplicate = True
+                break
+        if not duplicate:
+            unique.append(item)
+
+    if not unique:
         return {
             "damage_size_ratio": 0.0,
             "damage_extent": 0.0,
-            "damage_density": float(len(detections)),
+            "damage_density": 0.0,
         }
 
-    areas = [
-        max(0.0, float(box[2]) - float(box[0]))
-        * max(0.0, float(box[3]) - float(box[1]))
-        for box in valid_boxes
-    ]
-
+    boxes = [item["box"] for item in unique]
+    areas = [(b[2] - b[0]) * (b[3] - b[1]) for b in boxes]
     total_area = sum(areas)
-
-    min_x = min(float(box[0]) for box in valid_boxes)
-    min_y = min(float(box[1]) for box in valid_boxes)
-    max_x = max(float(box[2]) for box in valid_boxes)
-    max_y = max(float(box[3]) for box in valid_boxes)
-
-    bounding_region_area = max(
-        1.0,
-        (max_x - min_x) * (max_y - min_y),
-    )
+    min_x = min(b[0] for b in boxes)
+    min_y = min(b[1] for b in boxes)
+    max_x = max(b[2] for b in boxes)
+    max_y = max(b[3] for b in boxes)
+    region_area = max(1.0, (max_x - min_x) * (max_y - min_y))
 
     return {
-        "damage_size_ratio": round(
-            max(areas) / max(1.0, total_area),
-            4,
-        ),
-
-        "damage_extent": round(
-            min(1.0, total_area / bounding_region_area),
-            4,
-        ),
-
-        "damage_density": round(
-            len(valid_boxes)
-            / max(1.0, bounding_region_area / 10000.0),
-            4,
-        ),
+        "damage_size_ratio": round(max(areas) / max(1.0, total_area), 4),
+        "damage_extent": round(min(1.0, total_area / region_area), 4),
+        "damage_density": round(len(unique) / max(1.0, region_area / 10000.0), 4),
     }
 
-
-# --------------------------------------------------
-# SEVERITY ASSESSMENT
-# --------------------------------------------------
-
 def assess_severity(detections, features):
-    """
-    Heuristic severity estimate.
-    This is not a trained severity classifier.
-    """
-
+    """Conservative severity proxy; weak predictions are not confirmed damage."""
     if not detections:
         return "Unconfirmed"
 
-    names = [
-        str(d.get("damage_type", "")).lower()
-        for d in detections
+    ordered = sorted(
+        detections,
+        key=lambda d: float(d.get("confidence", 0) or 0),
+        reverse=True,
+    )
+    unique = []
+
+    for detection in ordered:
+        box = detection.get("bbox_xyxy") or []
+        if len(box) != 4:
+            continue
+        x1, y1, x2, y2 = map(float, box)
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        duplicate = False
+        for kept in unique:
+            other = kept.get("bbox_xyxy") or []
+            if len(other) != 4:
+                continue
+            a1, b1, a2, b2 = map(float, other)
+            ix1, iy1 = max(x1, a1), max(y1, b1)
+            ix2, iy2 = min(x2, a2), min(y2, b2)
+            intersection = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+            area1 = (x2 - x1) * (y2 - y1)
+            area2 = max(0.0, a2 - a1) * max(0.0, b2 - b1)
+            union = area1 + area2 - intersection
+            if union > 0 and intersection / union >= 0.50:
+                duplicate = True
+                break
+        if not duplicate:
+            unique.append(detection)
+
+    if not unique:
+        return "Unconfirmed"
+
+    confidences = [float(d.get("confidence", 0) or 0) for d in unique]
+    average_confidence = sum(confidences) / len(confidences)
+
+    # Low-confidence predictions cannot establish physical severity.
+    if average_confidence < 0.25:
+        return "Unconfirmed"
+
+    confirmed = [
+        d for d in unique
+        if float(d.get("confidence", 0) or 0) >= 0.45
     ]
+    if not confirmed:
+        return "Unconfirmed"
 
-    confidences = [
-        max(
-            0.0,
-            min(
-                1.0,
-                float(d.get("confidence", 0) or 0),
-            ),
-        )
-        for d in detections
-    ]
-
-    class_points = sum(
-        3 if "pothole" in name
-        else 2 if (
-            "crack" in name or "alligator" in name
-        )
-        else 1
-        for name in names
+    pothole_count = sum(
+        "pothole" in str(d.get("candidate_type") or d.get("damage_type") or "").lower()
+        for d in confirmed
     )
 
-    size_points = min(
-        3.0,
-        features["damage_density"] * 0.25,
-    )
-
-    average_confidence = (
-        sum(confidences) / len(confidences)
-    )
-
-    score = (
-        class_points
-        + size_points
-        + average_confidence
-    )
-
-    if score >= 7:
+    # Multiple separate confirmed damage regions are needed for Severe.
+    if len(confirmed) >= 3 and pothole_count >= 1:
         return "Severe"
-
-    if score >= 3.5:
+    if pothole_count >= 1 or len(confirmed) >= 2:
         return "Moderate"
-
     return "Minor"
-
-
-# --------------------------------------------------
-# CONFIDENCE AND UNCERTAINTY
-# --------------------------------------------------
 
 def confidence_uncertainty(detections):
     """
@@ -637,86 +633,99 @@ def topsis_rank(report_rows):
 
 
 def refresh_priorities(conn):
-    """
-    Recalculate rankings for all reports that are not repaired.
-    Missing context is treated as unknown, not fabricated.
-    """
-
+    """Recalculate severity and priority, applying confidence safety limits."""
     rows = conn.execute("""
         SELECT
             report_id,
-
             CASE severity
                 WHEN 'Minor' THEN 1
                 WHEN 'Moderate' THEN 2
                 WHEN 'Severe' THEN 3
                 ELSE 0
             END AS severity_value,
-
             CASE
                 WHEN traffic_level IS NULL
                   OR road_importance IS NULL
                   OR location_type IS NULL
                 THEN 0
-
                 ELSE
-                    (
-                        CASE traffic_level
-                            WHEN 'High' THEN 3
-                            WHEN 'Medium' THEN 2
-                            WHEN 'Low' THEN 1
-                            ELSE 0
-                        END
-                    )
+                    (CASE traffic_level
+                        WHEN 'High' THEN 3 WHEN 'Medium' THEN 2
+                        WHEN 'Low' THEN 1 ELSE 0 END)
                     +
-                    (
-                        CASE road_importance
-                            WHEN 'Major' THEN 3
-                            WHEN 'Collector' THEN 2
-                            WHEN 'Local' THEN 1
-                            ELSE 0
-                        END
-                    )
+                    (CASE road_importance
+                        WHEN 'Major' THEN 3 WHEN 'Collector' THEN 2
+                        WHEN 'Local' THEN 1 ELSE 0 END)
                     +
-                    (
-                        CASE location_type
-                            WHEN 'School/Hospital' THEN 3
-                            WHEN 'Junction/Transit' THEN 2
-                            WHEN 'General' THEN 1
-                            ELSE 0
-                        END
-                    )
+                    (CASE location_type
+                        WHEN 'School/Hospital' THEN 3
+                        WHEN 'Junction/Transit' THEN 2
+                        WHEN 'General' THEN 1 ELSE 0 END)
             END AS context_points,
-
             COALESCE(avg_confidence, 0),
-
-            CASE
-                WHEN manual_verification_required THEN 1
-                ELSE 0
-            END,
-
+            CASE WHEN manual_verification_required THEN 1 ELSE 0 END,
             COALESCE(damage_extent, 0),
-
-            decision_route
-
+            decision_route,
+            detections
         FROM road_reports
         WHERE report_status <> 'Repaired'
     """).fetchall()
 
-    scores = topsis_rank(rows)
+    ranking_rows = []
 
     for row in rows:
-        score = scores.get(row[0], 0)
+        report_id = row[0]
+        detections = row[7] or []
+        severity = assess_severity(detections, {})
+        severity_value = {
+            "Unconfirmed": 0,
+            "Minor": 1,
+            "Moderate": 2,
+            "Severe": 3,
+        }.get(severity, 0)
 
-        if score >= 67:
+        conn.execute(
+            "UPDATE road_reports SET severity = %s WHERE report_id = %s",
+            (severity, report_id),
+        )
+
+        ranking_rows.append([
+            report_id,
+            severity_value,
+            float(row[2] or 0),
+            float(row[3] or 0),
+            bool(row[4]),
+            float(row[5] or 0),
+            row[6] or "Review",
+            severity,
+        ])
+
+    scores = topsis_rank(ranking_rows)
+
+    for row in ranking_rows:
+        report_id = row[0]
+        confidence = row[3]
+        verification_required = row[4]
+        severity = row[7]
+        score = scores.get(report_id, 0)
+
+        # Relative TOPSIS rank cannot override these absolute safety rules.
+        if severity == "Unconfirmed" or confidence < 0.15:
+            priority = "Low"
+            score = min(score, 33)
+        elif verification_required or confidence < 0.65:
+            priority = "Medium" if confidence >= 0.25 else "Low"
+            score = min(score, 66 if priority == "Medium" else 33)
+        elif severity == "Severe":
             priority = "High"
-        elif score >= 34:
+        elif severity == "Moderate":
             priority = "Medium"
+            score = min(score, 66)
         else:
             priority = "Low"
+            score = min(score, 33)
 
         route = row[6] or "Review"
-
         if route != "Automatic candidate":
             route = (
                 "Human verification"
@@ -726,26 +735,13 @@ def refresh_priorities(conn):
 
         conn.execute("""
             UPDATE road_reports
-            SET
-                priority_score = %s,
+            SET priority_score = %s,
                 proposed_score = %s,
                 priority = %s,
                 decision_route = %s
             WHERE report_id = %s
-        """, (
-            score,
-            score,
-            priority,
-            route,
-            row[0],
-        ))
+        """, (score, score, priority, route, report_id))
 
-
-# --------------------------------------------------
-# HTML DASHBOARDS
-# --------------------------------------------------
-
-@app.get("/", response_class=HTMLResponse)
 def dashboard():
     path = Path(__file__).resolve().parent / "dashboard.html"
 
